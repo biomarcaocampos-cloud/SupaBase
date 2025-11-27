@@ -1,9 +1,8 @@
 import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { QueueState, ServiceDesk, WaitingTicket, CompletedService, AbandonedTicket, ServiceType, AgendaEntry } from '../types';
-import { storageService } from '../services/storageService';
+import api from '../services/apiService';
 
 const TOTAL_DESKS = 20;
-const API_BASE_URL = 'http://localhost:3002'; // Backend está na porta 3002
 
 export interface ReinsertResult {
   success: boolean;
@@ -28,7 +27,7 @@ const defaultTips = [
   "Atermação é o ato de registrar seu pedido inicial no Juizado, transformando sua reclamação em um processo.",
   "Se a outra parte não cumprir a sentença, você deve pedir o 'Cumprimento de Sentença' para iniciar a cobrança.",
   "Para apresentar um recurso contra a sentença, a contratação de um advogado é obrigatória.",
-  "Se não puder pagar as custas de um recurso, peça a 'Justiça Gratuitá', comprovando sua necessidade.",
+  "Se não puder pagar as custas de um recurso, peça a 'Justiça Gratuita', comprovando sua necessidade.",
   "Seja claro e objetivo em seus pedidos e depoimentos, focando nos fatos importantes para a sua causa.",
   "Guarde todas as provas: e-mails, notas fiscais, contratos, conversas de WhatsApp e outros documentos.",
   "Muitas audiências são conduzidas por um Juiz Leigo, que prepara uma proposta de sentença para o Juiz Togado aprovar.",
@@ -77,60 +76,153 @@ interface QueueContextType {
   addAgendaEntry: (entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'>) => Promise<void>;
   updateAgendaEntry: (updatedEntry: AgendaEntry) => Promise<void>;
   cancelAgendaEntry: (entryId: string) => void;
+  refreshState: () => Promise<void>;
 }
 
 export const QueueContext = createContext<QueueContextType | undefined>(undefined);
 
-const getInitialState = (): QueueState => {
-  const savedState = storageService.getQueueState();
-  if (savedState) {
-    const migratedDesks = initialDesks.map(defaultDesk => {
-      const savedDesk = savedState.desks.find((d: ServiceDesk) => d.id === defaultDesk.id);
-      return savedDesk ? { ...defaultDesk, ...savedDesk } : defaultDesk;
-    });
-    return {
-      ...initialState,
-      ...savedState,
-      desks: migratedDesks,
-      abandonedTickets: savedState.abandonedTickets || [],
-      tips: savedState.tips || defaultTips,
-      alertMessage: savedState.alertMessage || null,
-      agenda: savedState.agenda || [],
-    };
-  }
-  return initialState;
-};
-
 export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<QueueState>(getInitialState);
+  const [state, setState] = useState<QueueState>(initialState);
 
-  useEffect(() => {
-    storageService.saveQueueState(state);
-  }, [state]);
+  // Load initial state from backend
+  const refreshState = useCallback(async () => {
+    try {
+      // Load tickets
+      const ticketsResponse = await api.tickets.getAll({ status: 'AGUARDANDO' });
+      const tickets = ticketsResponse.tickets || [];
 
-  const handleStorageChange = useCallback((event: StorageEvent) => {
-    if (event.key === storageService.QUEUE_STORAGE_KEY && event.newValue) {
-      try {
-        setState(JSON.parse(event.newValue));
-      } catch (error) {
-        console.error("Error parsing localStorage update", error);
-      }
+      const waitingNormal = tickets
+        .filter((t: any) => t.ticket_type === 'NORMAL')
+        .map((t: any) => ({
+          number: t.ticket_number,
+          dispenseTimestamp: new Date(t.created_at).getTime(),
+          type: 'NORMAL' as const,
+          service: t.service as ServiceType,
+        }));
+
+      const waitingPreferential = tickets
+        .filter((t: any) => t.ticket_type === 'PREFERENCIAL')
+        .map((t: any) => ({
+          number: t.ticket_number,
+          dispenseTimestamp: new Date(t.created_at).getTime(),
+          type: 'PREFERENCIAL' as const,
+          service: t.service as ServiceType,
+        }));
+
+      // Load desks
+      const desksResponse = await api.desks.getAll();
+      const backendDesks = desksResponse.desks || [];
+
+      const desks = initialDesks.map(defaultDesk => {
+        const backendDesk = backendDesks.find((d: any) => d.id === defaultDesk.id);
+        if (!backendDesk) return defaultDesk;
+
+        return {
+          ...defaultDesk,
+          user: backendDesk.user_id ? {
+            id: backendDesk.user_id,
+            displayName: backendDesk.user_display_name || '',
+          } : null,
+          currentTicket: backendDesk.current_ticket,
+          currentTicketInfo: backendDesk.current_ticket_info ? JSON.parse(backendDesk.current_ticket_info) : null,
+          serviceStartTime: backendDesk.service_start_time,
+          services: backendDesk.services || [],
+        };
+      });
+
+      // Load history
+      const historyResponse = await api.history.getCalledHistory(100);
+      const calledHistory = (historyResponse.history || []).map((h: any) => ({
+        ticketNumber: h.ticket_number,
+        deskNumber: h.desk_number,
+        timestamp: h.timestamp,
+        type: h.ticket_type,
+      }));
+
+      // Load completed services
+      const completedResponse = await api.history.getCompletedServices(100);
+      const completedServices = (completedResponse.services || []).map((s: any) => ({
+        ticketNumber: s.ticket_number,
+        deskId: s.desk_id,
+        userId: s.user_id,
+        userName: s.user_name,
+        serviceDuration: s.service_duration,
+        waitTime: s.wait_time,
+        completedTimestamp: s.completed_timestamp,
+        service: s.service,
+      }));
+
+      // Load abandoned tickets
+      const abandonedResponse = await api.history.getAbandonedTickets(100);
+      const abandonedTickets = (abandonedResponse.tickets || []).map((t: any) => ({
+        ticketNumber: t.ticket_number,
+        deskId: t.desk_id,
+        userId: t.user_id,
+        userName: t.user_name,
+        calledTimestamp: t.called_timestamp,
+        abandonedTimestamp: t.abandoned_timestamp,
+        type: t.ticket_type,
+        waitTime: t.wait_time,
+        service: t.service,
+      }));
+
+      // Load agenda
+      const agendaResponse = await api.agenda.getAll();
+      const agenda = (agendaResponse.agenda || []).map((a: any) => ({
+        id: a.id,
+        ticketNumber: a.ticket_number,
+        nomeCompleto: a.nome_completo,
+        cpf: a.cpf,
+        telefone: a.telefone,
+        email: a.email,
+        dataAgendamento: a.data_agendamento,
+        horario: a.horario,
+        servico: a.servico,
+        observacoes: a.observacoes,
+        documentosNecessarios: a.documentos_necessarios || [],
+        data_do_registro: a.data_do_registro,
+        status: a.status,
+      }));
+
+      // Load config
+      const tipsConfig = await api.config.get('tips').catch(() => ({ config_value: JSON.stringify(defaultTips) }));
+      const tips = JSON.parse(tipsConfig.config_value);
+
+      const alertConfig = await api.config.get('alert_message').catch(() => ({ config_value: '' }));
+      const alertMessage = alertConfig.config_value || null;
+
+      setState({
+        ...state,
+        waitingNormal,
+        waitingPreferential,
+        desks,
+        calledHistory,
+        completedServices,
+        abandonedTickets,
+        agenda,
+        tips,
+        alertMessage,
+      });
+
+      console.log('✅ Estado carregado do backend');
+    } catch (error) {
+      console.warn('⚠️ Erro ao carregar estado do backend:', error);
+      // Keep current state if load fails
     }
   }, []);
 
+  // Load state on mount
   useEffect(() => {
-    window.addEventListener('storage', handleStorageChange);
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [handleStorageChange]);
+    refreshState();
+  }, []);
 
-  const finalizeCurrentTicket = (desk: ServiceDesk, currentState: QueueState): QueueState => {
+  const finalizeCurrentTicket = async (desk: ServiceDesk, currentState: QueueState): Promise<QueueState> => {
     if (!desk.user || !desk.currentTicketInfo) {
       return currentState;
     }
 
-    if (desk.serviceStartTime) { // Completed service
+    if (desk.serviceStartTime) {
+      // Completed service
       const waitTime = desk.serviceStartTime - desk.currentTicketInfo.dispenseTimestamp;
       const serviceDuration = Date.now() - desk.serviceStartTime;
 
@@ -145,11 +237,28 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         service: desk.currentTicketInfo.service,
       };
 
+      // Save to backend
+      try {
+        await api.history.addCompletedService({
+          ticket_number: newCompletedService.ticketNumber,
+          desk_id: newCompletedService.deskId,
+          user_id: newCompletedService.userId,
+          user_name: newCompletedService.userName,
+          service_duration: newCompletedService.serviceDuration,
+          wait_time: newCompletedService.waitTime,
+          completed_timestamp: newCompletedService.completedTimestamp,
+          service: newCompletedService.service,
+        });
+      } catch (error) {
+        console.warn('⚠️ Erro ao salvar serviço completado:', error);
+      }
+
       return {
         ...currentState,
         completedServices: [newCompletedService, ...currentState.completedServices],
       };
-    } else { // Abandoned ticket (no-show)
+    } else {
+      // Abandoned ticket (no-show)
       const calledInfo = [...currentState.calledHistory]
         .sort((a, b) => b.timestamp - a.timestamp)
         .find(t => t.ticketNumber === desk.currentTicketInfo?.number);
@@ -168,6 +277,23 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         service: desk.currentTicketInfo.service,
       };
 
+      // Save to backend
+      try {
+        await api.history.addAbandonedTicket({
+          ticket_number: newAbandonedTicket.ticketNumber,
+          desk_id: newAbandonedTicket.deskId,
+          user_id: newAbandonedTicket.userId,
+          user_name: newAbandonedTicket.userName,
+          called_timestamp: newAbandonedTicket.calledTimestamp,
+          abandoned_timestamp: newAbandonedTicket.abandonedTimestamp,
+          ticket_type: newAbandonedTicket.type,
+          wait_time: newAbandonedTicket.waitTime,
+          service: newAbandonedTicket.service,
+        });
+      } catch (error) {
+        console.warn('⚠️ Erro ao salvar senha abandonada:', error);
+      }
+
       return {
         ...currentState,
         abandonedTickets: [newAbandonedTicket, ...currentState.abandonedTickets],
@@ -177,266 +303,311 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const dispenseTicket = async (type: 'NORMAL' | 'PREFERENCIAL', service: ServiceType): Promise<string> => {
     try {
-      // 1. CALL BACKEND FIRST to get the authoritative ticket number
-      const response = await fetch(`${API_BASE_URL}/api/tickets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, service }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Backend não disponível');
-      }
-
-      const backendTicket = await response.json();
+      // Call backend to create ticket
+      const backendTicket = await api.tickets.create(type, service);
       const ticketNumber = backendTicket.ticket_number;
 
-      // 2. UPDATE LOCAL STATE with backend data
+      // Update local state
+      const newTicket: WaitingTicket = {
+        number: ticketNumber,
+        dispenseTimestamp: Date.now(),
+        type,
+        service
+      };
+
       setState(prevState => {
-        const newTicket: WaitingTicket = {
-          number: ticketNumber,
-          dispenseTimestamp: Date.now(),
-          type,
-          service
-        };
-
-        // Extract sequence number from ticket (e.g., "N005" -> 5)
         const sequenceNum = parseInt(ticketNumber.substring(1));
-
-        const newState = {
+        return {
           ...prevState,
           nextNormalTicket: type === 'NORMAL' ? Math.max(prevState.nextNormalTicket, sequenceNum + 1) : prevState.nextNormalTicket,
           nextPreferentialTicket: type === 'PREFERENCIAL' ? Math.max(prevState.nextPreferentialTicket, sequenceNum + 1) : prevState.nextPreferentialTicket,
           waitingNormal: type === 'NORMAL' ? [...prevState.waitingNormal, newTicket] : prevState.waitingNormal,
           waitingPreferential: type === 'PREFERENCIAL' ? [...prevState.waitingPreferential, newTicket] : prevState.waitingPreferential,
         };
-        return newState;
       });
 
       console.log(`✅ Senha ${ticketNumber} gerada e salva no banco de dados`);
       return ticketNumber;
-
     } catch (error) {
-      // 3. FALLBACK to local mode if backend is unavailable
-      console.warn("⚠️ Backend indisponível. Gerando senha em modo local.", error);
-
-      let ticketNumber = '';
-
-      setState(prevState => {
-        const prefix = type === 'NORMAL' ? 'N' : 'P';
-        const sequence = type === 'NORMAL' ? prevState.nextNormalTicket : prevState.nextPreferentialTicket;
-        ticketNumber = `${prefix}${String(sequence).padStart(3, '0')}`;
-
-        const newTicket: WaitingTicket = {
-          number: ticketNumber,
-          dispenseTimestamp: Date.now(),
-          type,
-          service
-        };
-
-        const newState = {
-          ...prevState,
-          nextNormalTicket: type === 'NORMAL' ? prevState.nextNormalTicket + 1 : prevState.nextNormalTicket,
-          nextPreferentialTicket: type === 'PREFERENCIAL' ? prevState.nextPreferentialTicket + 1 : prevState.nextPreferentialTicket,
-          waitingNormal: type === 'NORMAL' ? [...prevState.waitingNormal, newTicket] : prevState.waitingNormal,
-          waitingPreferential: type === 'PREFERENCIAL' ? [...prevState.waitingPreferential, newTicket] : prevState.waitingPreferential,
-        };
-        return newState;
-      });
-
-      return ticketNumber;
+      console.error('❌ Erro ao gerar senha:', error);
+      throw error;
     }
   };
 
-  const callSpecificTicket = (deskId: number, type: 'NORMAL' | 'PREFERENCIAL') => {
-    setState(prevState => {
-      const deskBeingUsed = prevState.desks.find(d => d.id === deskId);
-      if (!deskBeingUsed || !deskBeingUsed.user || deskBeingUsed.services.length === 0) {
-        return prevState;
+  const callSpecificTicket = async (deskId: number, type: 'NORMAL' | 'PREFERENCIAL') => {
+    // Get current state snapshot
+    const prevState = state;
+    const deskBeingUsed = prevState.desks.find(d => d.id === deskId);
+
+    if (!deskBeingUsed || !deskBeingUsed.user || deskBeingUsed.services.length === 0) {
+      return;
+    }
+
+    let stateAfterFinalizing = prevState;
+    if (deskBeingUsed.currentTicketInfo) {
+      // This updates backend and returns new state structure (but doesn't update React state yet)
+      stateAfterFinalizing = await finalizeCurrentTicket(deskBeingUsed, prevState);
+    }
+
+    const { waitingPreferential, waitingNormal, desks } = stateAfterFinalizing;
+    const deskServices = deskBeingUsed.services;
+
+    let ticketToCall: WaitingTicket | undefined;
+    let queueToSearch: WaitingTicket[];
+
+    if (type === 'PREFERENCIAL') {
+      queueToSearch = waitingPreferential;
+    } else {
+      queueToSearch = waitingNormal;
+    }
+
+    const ticketIndex = queueToSearch.findIndex(t => deskServices.includes(t.service));
+
+    if (ticketIndex === -1) {
+      // Update desk in backend
+      try {
+        await api.desks.update(deskId, {
+          current_ticket: null,
+          current_ticket_info: null,
+          service_start_time: null,
+        });
+      } catch (error) {
+        console.warn('⚠️ Erro ao atualizar mesa:', error);
       }
 
-      let stateAfterFinalizing = prevState;
-      if (deskBeingUsed.currentTicketInfo) {
-        stateAfterFinalizing = finalizeCurrentTicket(deskBeingUsed, prevState);
-      }
-
-      const { waitingPreferential, waitingNormal, desks } = stateAfterFinalizing;
-      const deskServices = deskBeingUsed.services;
-
-      let ticketToCall: WaitingTicket | undefined;
-      let queueToSearch: WaitingTicket[];
-
-      if (type === 'PREFERENCIAL') {
-        queueToSearch = waitingPreferential;
-      } else {
-        queueToSearch = waitingNormal;
-      }
-
-      const ticketIndex = queueToSearch.findIndex(t => deskServices.includes(t.service));
-
-      if (ticketIndex === -1) {
-        const newDesks = desks.map(desk =>
-          desk.id === deskId
-            ? { ...desk, currentTicket: null, currentTicketInfo: null, serviceStartTime: null }
-            : desk
-        );
-        return {
-          ...stateAfterFinalizing,
-          desks: newDesks,
-        };
-      }
-
-      ticketToCall = queueToSearch[ticketIndex];
-
-      let newWaitingPreferential = [...waitingPreferential];
-      let newWaitingNormal = [...waitingNormal];
-
-      if (type === 'PREFERENCIAL') {
-        newWaitingPreferential.splice(ticketIndex, 1);
-      } else {
-        newWaitingNormal.splice(ticketIndex, 1);
-      }
-
-      const newCalledTicket = {
-        ticketNumber: ticketToCall.number,
-        deskNumber: deskId,
-        timestamp: Date.now(),
-        type: ticketToCall.type,
-      };
-
-      const newCalledHistory = [newCalledTicket, ...stateAfterFinalizing.calledHistory];
       const newDesks = desks.map(desk =>
-        desk.id === deskId
-          ? { ...desk, currentTicket: ticketToCall!.number, currentTicketInfo: ticketToCall, serviceStartTime: null }
-          : desk
-      );
-
-      return {
-        ...stateAfterFinalizing,
-        waitingNormal: newWaitingNormal,
-        waitingPreferential: newWaitingPreferential,
-        calledHistory: newCalledHistory,
-        desks: newDesks,
-      };
-    });
-  };
-
-
-  const login = (deskId: number, user: { id: string; displayName: string }, services: ServiceType[]) => {
-    setState(prevState => ({
-      ...prevState,
-      desks: prevState.desks.map(desk => desk.id === deskId ? { ...desk, user, services } : desk),
-    }));
-  };
-
-  const logout = (deskId: number) => {
-    setState(prevState => {
-      const deskToLogout = prevState.desks.find(d => d.id === deskId);
-      let stateAfterFinalizing = prevState;
-      if (deskToLogout) {
-        stateAfterFinalizing = finalizeCurrentTicket(deskToLogout, prevState);
-      }
-      return {
-        ...stateAfterFinalizing,
-        desks: stateAfterFinalizing.desks.map(desk => desk.id === deskId ? { ...desk, user: null, currentTicket: null, currentTicketInfo: null, serviceStartTime: null, services: [] } : desk),
-      };
-    });
-  };
-
-  const startService = (deskId: number) => {
-    setState(prevState => ({
-      ...prevState,
-      desks: prevState.desks.map(desk => desk.id === deskId ? { ...desk, serviceStartTime: Date.now() } : desk),
-    }));
-  };
-
-  const endService = (deskId: number) => {
-    setState(prevState => {
-      const deskToEnd = prevState.desks.find(d => d.id === deskId);
-      if (!deskToEnd || !deskToEnd.currentTicketInfo || !deskToEnd.serviceStartTime) {
-        return prevState;
-      }
-
-      const stateAfterFinalizing = finalizeCurrentTicket(deskToEnd, prevState);
-
-      const newDesks = stateAfterFinalizing.desks.map(desk =>
         desk.id === deskId
           ? { ...desk, currentTicket: null, currentTicketInfo: null, serviceStartTime: null }
           : desk
       );
 
-      return {
+      setState({
         ...stateAfterFinalizing,
-        desks: newDesks
-      };
+        desks: newDesks,
+      });
+      return;
+    }
+
+    ticketToCall = queueToSearch[ticketIndex];
+
+    let newWaitingPreferential = [...waitingPreferential];
+    let newWaitingNormal = [...waitingNormal];
+
+    if (type === 'PREFERENCIAL') {
+      newWaitingPreferential.splice(ticketIndex, 1);
+    } else {
+      newWaitingNormal.splice(ticketIndex, 1);
+    }
+
+    const newCalledTicket = {
+      ticketNumber: ticketToCall.number,
+      deskNumber: deskId,
+      timestamp: Date.now(),
+      type: ticketToCall.type,
+    };
+
+    // Save to backend
+    try {
+      await api.history.addCalledHistory({
+        ticket_number: newCalledTicket.ticketNumber,
+        desk_number: newCalledTicket.deskNumber,
+        ticket_type: newCalledTicket.type,
+        timestamp: newCalledTicket.timestamp,
+      });
+
+      await api.desks.update(deskId, {
+        current_ticket: ticketToCall.number,
+        current_ticket_info: ticketToCall,
+        service_start_time: null,
+      });
+
+      // Update ticket status with additional info
+      const callTime = Date.now();
+      const waitTime = callTime - (ticketToCall.dispenseTimestamp || callTime);
+
+      await api.tickets.updateStatus(ticketToCall.number, 'CHAMANDO', {
+        call_time: new Date(callTime).toISOString(),
+        wait_time: waitTime,
+        desk_id: deskId,
+        attendant_name: deskBeingUsed.user?.displayName || 'Desconhecido'
+      });
+    } catch (error) {
+      console.warn('⚠️ Erro ao salvar chamada:', error);
+    }
+
+    const newCalledHistory = [newCalledTicket, ...stateAfterFinalizing.calledHistory];
+    const newDesks = desks.map(desk =>
+      desk.id === deskId
+        ? { ...desk, currentTicket: ticketToCall!.number, currentTicketInfo: ticketToCall, serviceStartTime: null }
+        : desk
+    );
+
+    setState({
+      ...stateAfterFinalizing,
+      waitingNormal: newWaitingNormal,
+      waitingPreferential: newWaitingPreferential,
+      calledHistory: newCalledHistory,
+      desks: newDesks,
+    });
+  };
+
+  const login = async (deskId: number, user: { id: string; displayName: string }, services: ServiceType[]) => {
+    try {
+      await api.desks.update(deskId, {
+        user_id: user.id,
+        user_display_name: user.displayName,
+        services,
+      });
+
+      setState(prevState => ({
+        ...prevState,
+        desks: prevState.desks.map(desk => desk.id === deskId ? { ...desk, user, services } : desk),
+      }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao fazer login na mesa:', error);
+    }
+  };
+
+  const logout = async (deskId: number) => {
+    const prevState = state;
+    const deskToLogout = prevState.desks.find(d => d.id === deskId);
+    let stateAfterFinalizing = prevState;
+
+    if (deskToLogout) {
+      stateAfterFinalizing = await finalizeCurrentTicket(deskToLogout, prevState);
+    }
+
+    try {
+      await api.desks.update(deskId, {
+        user_id: null,
+        user_display_name: null,
+        current_ticket: null,
+        current_ticket_info: null,
+        service_start_time: null,
+        services: [],
+      });
+    } catch (error) {
+      console.warn('⚠️ Erro ao fazer logout da mesa:', error);
+    }
+
+    setState({
+      ...stateAfterFinalizing,
+      desks: stateAfterFinalizing.desks.map(desk =>
+        desk.id === deskId
+          ? { ...desk, user: null, currentTicket: null, currentTicketInfo: null, serviceStartTime: null, services: [] }
+          : desk
+      ),
+    });
+  };
+
+  const startService = async (deskId: number) => {
+    const startTime = Date.now();
+
+    try {
+      await api.desks.update(deskId, {
+        service_start_time: startTime,
+      });
+
+      setState(prevState => ({
+        ...prevState,
+        desks: prevState.desks.map(desk => desk.id === deskId ? { ...desk, serviceStartTime: startTime } : desk),
+      }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao iniciar serviço:', error);
+    }
+  };
+
+  const endService = async (deskId: number) => {
+    const prevState = state;
+    const deskToEnd = prevState.desks.find(d => d.id === deskId);
+    if (!deskToEnd || !deskToEnd.currentTicketInfo || !deskToEnd.serviceStartTime) {
+      return;
+    }
+
+    const stateAfterFinalizing = await finalizeCurrentTicket(deskToEnd, prevState);
+
+    try {
+      await api.desks.update(deskId, {
+        current_ticket: null,
+        current_ticket_info: null,
+        service_start_time: null,
+      });
+    } catch (error) {
+      console.warn('⚠️ Erro ao finalizar serviço:', error);
+    }
+
+    const newDesks = stateAfterFinalizing.desks.map(desk =>
+      desk.id === deskId
+        ? { ...desk, currentTicket: null, currentTicketInfo: null, serviceStartTime: null }
+        : desk
+    );
+
+    setState({
+      ...stateAfterFinalizing,
+      desks: newDesks
     });
   };
 
   const resetSystem = () => {
     if (window.confirm("Tem certeza que deseja reiniciar o sistema? Os dados de hoje serão arquivados e uma nova sessão será iniciada.")) {
-      const today = new Date();
-      const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-      const historyData = {
-        completedServices: state.completedServices,
-        abandonedTickets: state.abandonedTickets,
-      };
-
-      if (historyData.completedServices.length > 0 || historyData.abandonedTickets.length > 0) {
-        storageService.archiveDay(dateKey, historyData);
-      }
-
-      setState({ ...initialState, tips: state.tips, alertMessage: state.alertMessage, agenda: state.agenda }); // Keep messages and agenda on reset
+      // In the new system, we just clear local state
+      // Backend data remains for historical purposes
+      setState({ ...initialState, tips: state.tips, alertMessage: state.alertMessage, agenda: state.agenda });
+      console.log('✅ Sistema reiniciado');
     }
   };
 
-  const reinsertTicket = (ticketNumber: string): Promise<ReinsertResult> => {
-    return new Promise((resolve) => {
+  const reinsertTicket = async (ticketNumber: string): Promise<ReinsertResult> => {
+    const upperCaseTicketNumber = ticketNumber.toUpperCase();
+
+    // Check if already completed
+    const completedTicket = state.completedServices.find(t => t.ticketNumber.toUpperCase() === upperCaseTicketNumber);
+    if (completedTicket) {
+      return {
+        success: false,
+        message: `Essa senha já foi atendida.`,
+        details: {
+          deskId: completedTicket.deskId,
+          user: completedTicket.userName,
+          timestamp: completedTicket.completedTimestamp,
+        }
+      };
+    }
+
+    // Find in abandoned
+    const ticketToReinsert = state.abandonedTickets.find(t => t.ticketNumber.toUpperCase() === upperCaseTicketNumber);
+    if (!ticketToReinsert) {
+      return {
+        success: false,
+        message: 'Senha não encontrada na lista de abandonadas ou inválida.'
+      };
+    }
+
+    try {
+      // Remove from abandoned in backend
+      await api.history.removeAbandonedTicket(upperCaseTicketNumber);
+
+      // Create new ticket
+      await api.tickets.create(ticketToReinsert.type as any, ticketToReinsert.service as ServiceType);
+
+      // Update local state
       setState(prevState => {
-        const upperCaseTicketNumber = ticketNumber.toUpperCase();
-
-        const completedTicket = prevState.completedServices.find(t => t.ticketNumber.toUpperCase() === upperCaseTicketNumber);
-        if (completedTicket) {
-          resolve({
-            success: false,
-            message: `Essa senha já foi atendida.`,
-            details: {
-              deskId: completedTicket.deskId,
-              user: completedTicket.userName,
-              timestamp: completedTicket.completedTimestamp,
-            }
-          });
-          return prevState;
-        }
-
-        const ticketToReinsert = prevState.abandonedTickets.find(t => t.ticketNumber.toUpperCase() === upperCaseTicketNumber);
-
-        if (!ticketToReinsert) {
-          resolve({
-            success: false,
-            message: 'Senha não encontrada na lista de abandonadas ou inválida.'
-          });
-          return prevState;
-        }
-
         const newWaitingTicket: WaitingTicket = {
           number: ticketToReinsert.ticketNumber,
-          type: ticketToReinsert.type,
-          service: ticketToReinsert.service,
+          type: ticketToReinsert.type as any,
+          service: ticketToReinsert.service as ServiceType,
           dispenseTimestamp: Date.now(),
         };
 
         const newAbandoned = prevState.abandonedTickets.filter(t => t.ticketNumber.toUpperCase() !== upperCaseTicketNumber);
 
         if (newWaitingTicket.type === 'NORMAL') {
-          resolve({ success: true, message: `Senha ${upperCaseTicketNumber} reinserida na fila com sucesso.` });
           return {
             ...prevState,
             abandonedTickets: newAbandoned,
             waitingNormal: [...prevState.waitingNormal, newWaitingTicket],
           };
         } else {
-          resolve({ success: true, message: `Senha ${upperCaseTicketNumber} reinserida na fila com sucesso.` });
           return {
             ...prevState,
             abandonedTickets: newAbandoned,
@@ -444,61 +615,116 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           };
         }
       });
-    });
+
+      return { success: true, message: `Senha ${upperCaseTicketNumber} reinserida na fila com sucesso.` };
+    } catch (error) {
+      console.error('❌ Erro ao reinserir senha:', error);
+      return { success: false, message: 'Erro ao reinserir senha.' };
+    }
   };
 
-  const updateTips = (newTips: string[]) => {
-    setState(prevState => ({ ...prevState, tips: newTips }));
+  const updateTips = async (newTips: string[]) => {
+    try {
+      await api.config.update('tips', JSON.stringify(newTips));
+      setState(prevState => ({ ...prevState, tips: newTips }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao atualizar dicas:', error);
+    }
   };
 
-  const setAlertMessage = (message: string) => {
-    setState(prevState => ({ ...prevState, alertMessage: message }));
+  const setAlertMessage = async (message: string) => {
+    try {
+      await api.config.update('alert_message', message);
+      setState(prevState => ({ ...prevState, alertMessage: message }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao definir mensagem de alerta:', error);
+    }
   };
 
-  const clearAlertMessage = () => {
-    setState(prevState => ({ ...prevState, alertMessage: null }));
+  const clearAlertMessage = async () => {
+    try {
+      await api.config.update('alert_message', '');
+      setState(prevState => ({ ...prevState, alertMessage: null }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao limpar mensagem de alerta:', error);
+    }
   };
 
-  const addAgendaEntry = (entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'>): Promise<void> => {
-    return new Promise((resolve) => {
-      setState(prevState => {
-        const newEntry: AgendaEntry = {
-          ...entryData,
-          id: `AGENDA-${Date.now()}-${entryData.ticketNumber}`,
-          data_do_registro: Date.now(),
-          status: 'AGENDADO',
-        };
-        const updatedAgenda = [...prevState.agenda, newEntry];
-        resolve();
-        return {
-          ...prevState,
-          agenda: updatedAgenda,
-        };
+  const addAgendaEntry = async (entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'>): Promise<void> => {
+    const newEntry: AgendaEntry = {
+      ...entryData,
+      id: `AGENDA-${Date.now()}-${entryData.ticketNumber}`,
+      data_do_registro: Date.now(),
+      status: 'AGENDADO',
+    };
+
+    try {
+      await api.agenda.create({
+        id: newEntry.id,
+        ticket_number: newEntry.ticketNumber,
+        nome_completo: newEntry.nomeCompleto,
+        cpf: newEntry.cpf,
+        telefone: newEntry.telefone,
+        email: newEntry.email,
+        data_agendamento: newEntry.dataAgendamento,
+        horario: newEntry.horario,
+        servico: newEntry.servico,
+        observacoes: newEntry.observacoes,
+        documentos_necessarios: newEntry.documentosNecessarios,
+        data_do_registro: newEntry.data_do_registro,
       });
-    });
+
+      setState(prevState => ({
+        ...prevState,
+        agenda: [...prevState.agenda, newEntry],
+      }));
+    } catch (error) {
+      console.error('❌ Erro ao adicionar agendamento:', error);
+      throw error;
+    }
   };
 
-  const updateAgendaEntry = (updatedEntry: AgendaEntry): Promise<void> => {
-    return new Promise((resolve) => {
-      setState(prevState => {
-        const updatedAgenda = prevState.agenda.map(entry =>
+  const updateAgendaEntry = async (updatedEntry: AgendaEntry): Promise<void> => {
+    try {
+      await api.agenda.update(updatedEntry.id, {
+        nome_completo: updatedEntry.nomeCompleto,
+        cpf: updatedEntry.cpf,
+        telefone: updatedEntry.telefone,
+        email: updatedEntry.email,
+        data_agendamento: updatedEntry.dataAgendamento,
+        horario: updatedEntry.horario,
+        servico: updatedEntry.servico,
+        observacoes: updatedEntry.observacoes,
+        documentos_necessarios: updatedEntry.documentosNecessarios,
+        status: updatedEntry.status,
+      });
+
+      setState(prevState => ({
+        ...prevState,
+        agenda: prevState.agenda.map(entry =>
           entry.id === updatedEntry.id ? updatedEntry : entry
-        );
-        resolve();
-        return { ...prevState, agenda: updatedAgenda };
-      });
-    });
+        ),
+      }));
+    } catch (error) {
+      console.error('❌ Erro ao atualizar agendamento:', error);
+      throw error;
+    }
   };
 
-  const cancelAgendaEntry = (entryId: string) => {
-    setState(prevState => {
-      const updatedAgenda = prevState.agenda.map(entry =>
-        entry.id === entryId ? { ...entry, status: 'CANCELADO' as AgendaEntry['status'] } : entry
-      );
-      return { ...prevState, agenda: updatedAgenda };
-    });
-  };
+  const cancelAgendaEntry = async (entryId: string) => {
+    try {
+      await api.agenda.cancel(entryId);
 
+      setState(prevState => ({
+        ...prevState,
+        agenda: prevState.agenda.map(entry =>
+          entry.id === entryId ? { ...entry, status: 'CANCELADO' as AgendaEntry['status'] } : entry
+        ),
+      }));
+    } catch (error) {
+      console.warn('⚠️ Erro ao cancelar agendamento:', error);
+    }
+  };
 
   return (
     <QueueContext.Provider value={{
@@ -517,6 +743,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       addAgendaEntry,
       updateAgendaEntry,
       cancelAgendaEntry,
+      refreshState,
     }}>
       {children}
     </QueueContext.Provider>

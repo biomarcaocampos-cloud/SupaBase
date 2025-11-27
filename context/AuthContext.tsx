@@ -1,33 +1,7 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { storageService } from '../services/storageService';
 import { User, ActivityLog } from '../types';
 import { validateCPF } from '../utils/cpfValidator';
-
-// Simple base64 "hashing" for demonstration purposes.
-// In a real-world application, a robust library like bcrypt should be used.
-const hashPassword = (password: string) => btoa(password);
-const verifyPassword = (password: string, hash: string) => btoa(password) === hash;
-
-const MASTER_CPF = '169.914.338-29';
-const MASTER_PASS = '123';
-
-const createMasterUser = (): User => {
-    const passwordHash = hashPassword(MASTER_PASS);
-    return {
-        id: MASTER_CPF.replace(/\D/g, ''),
-        cpf: MASTER_CPF,
-        fullName: 'Master Manager',
-        passwordHash,
-        role: 'MANAGER',
-        isActive: true,
-        profilePicture: null,
-        createdAt: Date.now(),
-        history: {
-            statusChanges: [{ timestamp: Date.now(), active: true, changedBy: 'system', changedByName: 'Sistema' }],
-            passwordResets: [],
-        },
-    };
-};
+import api from '../services/apiService';
 
 const getDisplayName = (fullName: string): string => {
     if (!fullName) return '';
@@ -44,199 +18,198 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
+    // Load users from backend and restore session
     useEffect(() => {
-        setIsLoading(true);
-        let allUsers = storageService.getUsers();
-        if (allUsers.length === 0 || !allUsers.some(u => u.cpf === MASTER_CPF)) {
-            const masterUser = createMasterUser();
-            // Ensure master user isn't duplicated if it was just missing
-            const otherUsers = allUsers.filter(u => u.cpf !== MASTER_CPF);
-            allUsers = [masterUser, ...otherUsers];
-            storageService.saveUsers(allUsers);
-        }
-        setUsers(allUsers);
+        const initAuth = async () => {
+            setIsLoading(true);
 
-        const loggedInUserId = sessionStorage.getItem('loggedInUserId');
-        if (loggedInUserId) {
-            const user = allUsers.find(u => u.id === loggedInUserId);
-            if (user && user.isActive) {
-                setCurrentUser(user);
-            } else {
-                sessionStorage.removeItem('loggedInUserId');
+            // Try to restore session from sessionStorage
+            const loggedInUserId = sessionStorage.getItem('loggedInUserId');
+            const loggedInUserData = sessionStorage.getItem('loggedInUserData');
+
+            if (loggedInUserId && loggedInUserData) {
+                try {
+                    const userData = JSON.parse(loggedInUserData);
+                    // Convert backend user to frontend User type
+                    const user: User = {
+                        id: userData.id?.toString() || userData.username,
+                        cpf: userData.cpf || '',
+                        fullName: userData.full_name,
+                        passwordHash: '', // We don't store password hash on frontend
+                        role: userData.role === 'admin' ? 'MANAGER' : 'ATTENDANT',
+                        isActive: userData.status === 'ATIVO',
+                        profilePicture: userData.profile_picture,
+                        createdAt: new Date(userData.created_at).getTime(),
+                        history: {
+                            statusChanges: [],
+                            passwordResets: [],
+                        },
+                    };
+                    setCurrentUser(user);
+                } catch (error) {
+                    console.error('Erro ao restaurar sessão:', error);
+                    sessionStorage.removeItem('loggedInUserId');
+                    sessionStorage.removeItem('loggedInUserData');
+                }
             }
-        }
-        setIsLoading(false);
+
+            setIsLoading(false);
+        };
+
+        initAuth();
     }, []);
 
-    const logActivity = (type: 'LOGIN' | 'LOGOUT', user: User) => {
-        const logs = storageService.getActivityLogs();
-        if (type === 'LOGIN') {
-            const newLog: ActivityLog = {
-                id: `${user.id}-${Date.now()}`,
-                userId: user.id,
-                userName: getDisplayName(user.fullName),
-                timestamp: Date.now(),
-                type: 'LOGIN',
-            };
-            storageService.saveActivityLogs([...logs, newLog]);
-        } else if (type === 'LOGOUT') {
-            const lastLogin = [...logs].reverse().find(l => l.userId === user.id && l.type === 'LOGIN' && !l.duration);
-            if (lastLogin) {
-                lastLogin.duration = Date.now() - lastLogin.timestamp;
-                storageService.saveActivityLogs(logs);
-            }
-        }
-    };
-
     const login = async (cpf: string, password: string): Promise<void> => {
-        const user = users.find(u => u.cpf.replace(/\D/g, '') === cpf.replace(/\D/g, ''));
-        if (!user) {
-            throw new Error('CPF não encontrado.');
-        }
-        if (!user.isActive) {
-            throw new Error('Este usuário está desativado.');
-        }
-        if (!verifyPassword(password, user.passwordHash)) {
-            throw new Error('Senha incorreta.');
-        }
-        setCurrentUser(user);
-        sessionStorage.setItem('loggedInUserId', user.id);
-        logActivity('LOGIN', user);
-    };
-
-    const logout = () => {
-        if (currentUser) {
-            logActivity('LOGOUT', currentUser);
-        }
-        setCurrentUser(null);
-        sessionStorage.removeItem('loggedInUserId');
-    };
-
-    const register = async (data: { fullName: string; cpf: string; password: string; profilePicture: string | null; }): Promise<void> => {
-        if (!validateCPF(data.cpf)) {
-            throw new Error('CPF inválido.');
-        }
-        const cleanCpf = data.cpf.replace(/\D/g, '');
-
-        // Check if user already exists locally
-        if (users.some(u => u.cpf.replace(/\D/g, '') === cleanCpf)) {
-            throw new Error('CPF já cadastrado.');
-        }
-
         try {
-            // Call backend API to register user
-            const username = cleanCpf; // Use CPF as username
-            const response = await fetch('http://localhost:3002/api/users/register', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    username,
-                    password: data.password,
-                    fullName: data.fullName,
-                    email: null,
-                    cpf: data.cpf,
-                    profilePicture: data.profilePicture
-                }),
-            });
+            // Use CPF as username (remove formatting)
+            const username = cpf.replace(/\D/g, '');
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Erro ao registrar usuário.');
-            }
+            // Call backend login API
+            const backendUser = await api.users.login(username, password);
 
-            const backendUser = await response.json();
-            console.log('✅ Usuário registrado no backend:', backendUser);
-
-            // Also save locally for compatibility
-            const newUser: User = {
-                id: cleanCpf,
-                cpf: data.cpf,
-                fullName: data.fullName,
-                passwordHash: hashPassword(data.password),
-                role: 'ATTENDANT',
-                isActive: true,
-                profilePicture: data.profilePicture,
-                createdAt: Date.now(),
+            // Convert backend user to frontend User type
+            const user: User = {
+                id: backendUser.id?.toString() || username,
+                cpf: backendUser.cpf || cpf,
+                fullName: backendUser.full_name,
+                passwordHash: '', // We don't store password hash on frontend
+                role: backendUser.role === 'admin' ? 'MANAGER' : 'ATTENDANT',
+                isActive: backendUser.status === 'ATIVO',
+                profilePicture: backendUser.profile_picture,
+                createdAt: new Date(backendUser.created_at).getTime(),
                 history: {
-                    statusChanges: [{ timestamp: Date.now(), active: true, changedBy: 'self', changedByName: 'Cadastro Próprio' }],
+                    statusChanges: [],
                     passwordResets: [],
                 },
             };
 
-            setUsers(prevUsers => {
-                const updatedUsers = [...prevUsers, newUser];
-                storageService.saveUsers(updatedUsers);
-                return updatedUsers;
-            });
+            if (!user.isActive) {
+                throw new Error('Este usuário está desativado.');
+            }
+
+            setCurrentUser(user);
+            sessionStorage.setItem('loggedInUserId', user.id);
+            sessionStorage.setItem('loggedInUserData', JSON.stringify(backendUser));
+
+            // Log activity
+            await logActivity('LOGIN', user);
+
+            console.log('✅ Login bem-sucedido:', user.fullName);
         } catch (error) {
-            console.error('❌ Erro ao registrar no backend:', error);
+            console.error('❌ Erro no login:', error);
+            throw error;
+        }
+    };
+
+    const logout = async () => {
+        if (currentUser) {
+            await logActivity('LOGOUT', currentUser);
+        }
+        setCurrentUser(null);
+        sessionStorage.removeItem('loggedInUserId');
+        sessionStorage.removeItem('loggedInUserData');
+    };
+
+    const register = async (data: {
+        fullName: string;
+        cpf: string;
+        password: string;
+        profilePicture: string | null;
+    }): Promise<void> => {
+        if (!validateCPF(data.cpf)) {
+            throw new Error('CPF inválido.');
+        }
+
+        try {
+            const username = data.cpf.replace(/\D/g, '');
+
+            // Call backend register API
+            await api.users.register({
+                username,
+                password: data.password,
+                fullName: data.fullName,
+                email: null,
+                cpf: data.cpf,
+                profilePicture: data.profilePicture,
+            });
+
+            console.log('✅ Usuário registrado com sucesso');
+        } catch (error) {
+            console.error('❌ Erro ao registrar:', error);
             throw error;
         }
     };
 
     const createUser = async (userData: Partial<User> & { password?: string }): Promise<void> => {
-        if (!currentUser || currentUser.role !== 'MANAGER') throw new Error("Apenas gestores podem criar usuários.");
-        if (!userData.cpf || !userData.password || !userData.fullName) throw new Error("CPF, Nome e Senha são obrigatórios.");
+        if (!currentUser || currentUser.role !== 'MANAGER') {
+            throw new Error("Apenas gestores podem criar usuários.");
+        }
+
+        if (!userData.cpf || !userData.password || !userData.fullName) {
+            throw new Error("CPF, Nome e Senha são obrigatórios.");
+        }
 
         if (!validateCPF(userData.cpf)) {
             throw new Error("CPF inválido.");
         }
 
-        const cleanCpf = userData.cpf.replace(/\D/g, '');
+        try {
+            const username = userData.cpf.replace(/\D/g, '');
 
-        setUsers(prevUsers => {
-            if (prevUsers.some(u => u.id === cleanCpf)) throw new Error("CPF já cadastrado.");
-
-            const newUser: User = {
-                id: cleanCpf,
-                cpf: userData.cpf!,
-                fullName: userData.fullName!,
-                passwordHash: hashPassword(userData.password!),
-                role: userData.role || 'MANAGER',
-                isActive: true,
+            await api.users.register({
+                username,
+                password: userData.password,
+                fullName: userData.fullName,
+                email: null,
+                cpf: userData.cpf,
                 profilePicture: userData.profilePicture || null,
-                createdAt: Date.now(),
-                history: {
-                    statusChanges: [{ timestamp: Date.now(), active: true, changedBy: currentUser.id, changedByName: getDisplayName(currentUser.fullName) }],
-                    passwordResets: [],
-                },
-            };
-            const updatedUsers = [...prevUsers, newUser];
-            storageService.saveUsers(updatedUsers);
-            return updatedUsers;
-        });
+            });
+
+            console.log('✅ Usuário criado com sucesso');
+        } catch (error) {
+            console.error('❌ Erro ao criar usuário:', error);
+            throw error;
+        }
     };
 
     const updateUser = async (updatedUserWithChanges: Partial<User> & { password?: string }): Promise<void> => {
-        if (!currentUser || currentUser.role !== 'MANAGER') throw new Error("Apenas gestores podem editar usuários.");
-        if (!updatedUserWithChanges.id) throw new Error("ID de usuário ausente para atualização.");
+        if (!currentUser || currentUser.role !== 'MANAGER') {
+            throw new Error("Apenas gestores podem editar usuários.");
+        }
 
-        setUsers(prevUsers => {
-            const userIndex = prevUsers.findIndex(u => u.id === updatedUserWithChanges.id);
-            if (userIndex === -1) {
-                console.error("Usuário não encontrado para atualizar.");
-                return prevUsers;
+        if (!updatedUserWithChanges.id) {
+            throw new Error("ID de usuário ausente para atualização.");
+        }
+
+        try {
+            const updateData: any = {};
+
+            if (updatedUserWithChanges.fullName) {
+                updateData.full_name = updatedUserWithChanges.fullName;
+            }
+            if (updatedUserWithChanges.role) {
+                updateData.role = updatedUserWithChanges.role === 'MANAGER' ? 'admin' : 'user';
+            }
+            if (updatedUserWithChanges.cpf) {
+                updateData.cpf = updatedUserWithChanges.cpf;
+            }
+            if (updatedUserWithChanges.profilePicture !== undefined) {
+                updateData.profile_picture = updatedUserWithChanges.profilePicture;
             }
 
-            const originalUser = prevUsers[userIndex];
-            const updatedUser = { ...originalUser, ...updatedUserWithChanges };
+            await api.users.update(updatedUserWithChanges.id, updateData);
 
-            if (updatedUserWithChanges.password) {
-                updatedUser.passwordHash = hashPassword(updatedUserWithChanges.password);
-            }
-
-            const updatedUsers = [...prevUsers];
-            updatedUsers[userIndex] = updatedUser;
-            storageService.saveUsers(updatedUsers);
-
-            if (currentUser?.id === updatedUser.id) {
+            // If updating current user, update session
+            if (currentUser.id === updatedUserWithChanges.id) {
+                const updatedUser = { ...currentUser, ...updatedUserWithChanges };
                 setCurrentUser(updatedUser);
             }
 
-            return updatedUsers;
-        });
+            console.log('✅ Usuário atualizado com sucesso');
+        } catch (error) {
+            console.error('❌ Erro ao atualizar usuário:', error);
+            throw error;
+        }
     };
 
     const toggleUserStatus = async (userId: string): Promise<void> => {
@@ -248,32 +221,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error("Você não pode desativar a si mesmo.");
         }
 
-        setUsers(prevUsers => {
-            const newUsers = prevUsers.map(user => {
-                if (user.id === userId) {
-                    const newIsActiveState = !user.isActive;
-                    return {
-                        ...user,
-                        isActive: newIsActiveState,
-                        history: {
-                            ...user.history,
-                            statusChanges: [
-                                ...user.history.statusChanges,
-                                {
-                                    timestamp: Date.now(),
-                                    active: newIsActiveState,
-                                    changedBy: currentUser.id,
-                                    changedByName: getDisplayName(currentUser.fullName),
-                                }
-                            ]
-                        }
-                    };
-                }
-                return user;
-            });
-            storageService.saveUsers(newUsers);
-            return newUsers;
-        });
+        try {
+            // Get current user status from backend
+            const users = await api.users.getAll();
+            const targetUser = users.users.find((u: any) => u.id.toString() === userId);
+
+            if (!targetUser) {
+                throw new Error("Usuário não encontrado.");
+            }
+
+            const newStatus = targetUser.status === 'ATIVO' ? 'INATIVO' : 'ATIVO';
+
+            await api.users.update(userId, { status: newStatus });
+
+            console.log('✅ Status do usuário alterado');
+        } catch (error) {
+            console.error('❌ Erro ao alterar status:', error);
+            throw error;
+        }
     };
 
     const resetPassword = async (userId: string): Promise<void> => {
@@ -285,31 +250,51 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error("Você não pode resetar sua própria senha.");
         }
 
-        setUsers(prevUsers => {
-            const newUsers = prevUsers.map(user => {
-                if (user.id === userId) {
-                    const newPassword = user.cpf.replace(/\D/g, '');
-                    return {
-                        ...user,
-                        passwordHash: hashPassword(newPassword),
-                        history: {
-                            ...user.history,
-                            passwordResets: [
-                                ...user.history.passwordResets,
-                                {
-                                    timestamp: Date.now(),
-                                    changedBy: currentUser.id,
-                                    changedByName: getDisplayName(currentUser.fullName),
-                                }
-                            ]
-                        }
-                    };
+        try {
+            // Get user CPF to use as new password
+            const users = await api.users.getAll();
+            const targetUser = users.users.find((u: any) => u.id.toString() === userId);
+
+            if (!targetUser) {
+                throw new Error("Usuário não encontrado.");
+            }
+
+            const newPassword = targetUser.cpf.replace(/\D/g, '');
+
+            await api.users.update(userId, { password: newPassword });
+
+            console.log('✅ Senha resetada para o CPF do usuário');
+        } catch (error) {
+            console.error('❌ Erro ao resetar senha:', error);
+            throw error;
+        }
+    };
+
+    const logActivity = async (type: 'LOGIN' | 'LOGOUT', user: User) => {
+        try {
+            if (type === 'LOGIN') {
+                const logId = `${user.id}-${Date.now()}`;
+                await api.activityLogs.create({
+                    id: logId,
+                    user_id: user.id,
+                    user_name: getDisplayName(user.fullName),
+                    timestamp: Date.now(),
+                    type: 'LOGIN',
+                });
+            } else if (type === 'LOGOUT') {
+                // Find the last login log and update duration
+                const logs = await api.activityLogs.getAll({ user_id: user.id, limit: 10 });
+                const lastLogin = logs.logs.find((l: any) => l.type === 'LOGIN' && !l.duration);
+
+                if (lastLogin) {
+                    const duration = Date.now() - lastLogin.timestamp;
+                    await api.activityLogs.updateDuration(lastLogin.id, duration);
                 }
-                return user;
-            });
-            storageService.saveUsers(newUsers);
-            return newUsers;
-        });
+            }
+        } catch (error) {
+            console.warn('⚠️ Erro ao registrar atividade:', error);
+            // Don't throw - activity logging is not critical
+        }
     };
 
     const value = {

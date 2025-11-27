@@ -1,0 +1,916 @@
+// Server for JEC Ticket System
+console.log('---------------------------------------------------');
+console.log('--- INICIALIZANDO SERVIDOR DO SISTEMA DE SENHAS ---');
+console.log('---------------------------------------------------');
+
+// Carrega as variáveis de ambiente do arquivo .env
+try {
+    require('dotenv').config();
+} catch (e) {
+    console.log('INFO: Biblioteca dotenv não carregada. Verifique se instalou: npm install dotenv');
+}
+
+let express, Pool, cors;
+try {
+    express = require('express');
+    const pg = require('pg');
+    Pool = pg.Pool;
+    cors = require('cors');
+    console.log('✅ Bibliotecas carregadas com sucesso.');
+} catch (e) {
+    console.error('❌ ERRO CRÍTICO: Falha ao carregar bibliotecas.');
+    console.error('Execute no terminal: npm install express pg cors dotenv');
+    process.exit(1);
+}
+
+const app = express();
+const port = 3002;
+
+app.use(cors());
+app.use(express.json());
+
+// Variáveis para Modo Memória (Fallback)
+let localWaitList = [];
+let localNormalCount = 0;
+let localPrefCount = 0;
+
+// --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+let pool = null;
+let dbReady = false;
+const connectionString = process.env.DATABASE_URL;
+
+async function init() {
+    if (!connectionString) {
+        console.warn('⚠️  AVISO: DATABASE_URL não encontrada no .env – rodando em modo memória.');
+        startServer();
+        return;
+    }
+
+    const isLocalhost = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+    console.log('🔄 Tentando conectar ao Banco de Dados...');
+    if (!isLocalhost) console.log('☁️  Detectado ambiente Nuvem – habilitando SSL.');
+
+    pool = new Pool({
+        connectionString,
+        ssl: isLocalhost ? false : { rejectUnauthorized: false },
+        connectionTimeoutMillis: 5000,
+    });
+
+    try {
+        const client = await pool.connect();
+        console.log('✅ SUCESSO: Conectado ao PostgreSQL!');
+        // Verifica se a tabela existe
+        await client.query('SELECT count(*) FROM waiting_tickets')
+            .then(res => console.log(`📊 Status: ${res.rows[0].count} senhas registradas no banco.`))
+            .catch(err => {
+                if (err.code === '42P01') {
+                    console.warn('⚠️  ALERTA: tabela "waiting_tickets" não existe. Crie-a via SQL editor.');
+                } else {
+                    console.warn('⚠️  Aviso ao verificar tabelas:', err.message);
+                }
+            });
+        client.release();
+        dbReady = true;
+        startServer();
+    } catch (err) {
+        console.error('❌ ERRO DE CONEXÃO COM O BANCO:');
+        console.error(`   Mensagem: ${err.message}`);
+        console.error('   → Verifique a senha no .env ou o status do projeto Supabase.');
+        console.error('   → O sistema rodará em MODO MEMÓRIA (sem salvar dados).');
+        startServer(); // ainda inicia, mas dbReady permanece false
+    }
+}
+
+function startServer() {
+    app.listen(port, () => {
+        console.log(`🚀 Servidor rodando em: http://localhost:${port}`);
+        if (connectionString) console.log('🔗 Conectando ao banco... aguarde.');
+    });
+}
+
+// Inicia a inicialização
+init();
+
+// --- ROTAS ---
+app.get('/api/status', (req, res) => {
+    res.json({
+        status: 'online',
+        mode: dbReady ? 'database' : 'memory',
+        message: dbReady ? 'Conectado ao PostgreSQL (Supabase/Local)' : 'Rodando em Memória Temporária',
+        timestamp: Date.now()
+    });
+});
+
+// Homepage with ticket emission button
+app.get('/', (req, res) => {
+    res.send(`
+        <div style="font-family: 'Inter', sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #1e1e2f, #2a2a3b); color: #f0f0f0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+            <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">Servidor JEC Guarulhos</h1>
+            <h2 style="color: ${dbReady ? '#4caf50' : '#ff9800'}; margin-bottom: 1.5rem;">
+                ${dbReady ? '✅ Conectado ao Banco de Dados' : '⚠️ Modo Memória (Sem Banco)'}
+            </h2>
+            <p style="margin-bottom: 2rem;">Endpoint API: http://localhost:${port}/api/tickets</p>
+            <button id="emitBtn" style="padding: 0.8rem 1.5rem; font-size: 1rem; background: #2196f3; color: #fff; border: none; border-radius: 4px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: background 0.3s;">
+                Emitir Ticket
+            </button>
+            <pre id="result" style="margin-top: 2rem; background: #333; color: #0f0; padding: 1rem; border-radius: 4px; max-width: 80%; overflow-x: auto;"></pre>
+            <script>
+                const btn = document.getElementById('emitBtn');
+                const out = document.getElementById('result');
+                btn.addEventListener('click', async () => {
+                    try {
+                        const resp = await fetch('/api/tickets', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type: 'NORMAL', service: 'Teste' })
+                        });
+                        const data = await resp.json();
+                        out.textContent = JSON.stringify(data, null, 2);
+                    } catch (e) {
+                        out.textContent = 'Erro: ' + e;
+                    }
+                });
+            </script>
+        </div>
+    `);
+});
+
+// POST - Create new ticket
+app.post('/api/tickets', async (req, res) => {
+    const { type, service } = req.body;
+    if (!type || !service) {
+        return res.status(400).json({ error: 'Dados inválidos.' });
+    }
+    try {
+        let ticketNumberStr;
+        if (dbReady) {
+            const sequenceName = type === 'NORMAL' ? 'normal_ticket_sequence' : 'preferential_ticket_sequence';
+            const nextValRes = await pool.query(`SELECT nextval('${sequenceName}')`);
+            const nextVal = nextValRes.rows[0].nextval;
+            const prefix = type === 'NORMAL' ? 'N' : 'P';
+            ticketNumberStr = `${prefix}${String(nextVal).padStart(3, '0')}`;
+            const insertQuery = `
+                INSERT INTO waiting_tickets (ticket_number, ticket_type, service, status)
+                VALUES ($1, $2, $3, 'AGUARDANDO')
+                RETURNING *;`;
+            const result = await pool.query(insertQuery, [ticketNumberStr, type, service]);
+            console.log(`[SUPABASE/DB] Nova senha gerada: ${ticketNumberStr} (${service})`);
+            return res.status(201).json(result.rows[0]);
+        } else {
+            if (type === 'NORMAL') {
+                localNormalCount++;
+                ticketNumberStr = `N${String(localNormalCount).padStart(3, '0')}`;
+            } else {
+                localPrefCount++;
+                ticketNumberStr = `P${String(localPrefCount).padStart(3, '0')}`;
+            }
+            const newTicket = {
+                id: Date.now(),
+                ticket_number: ticketNumberStr,
+                ticket_type: type,
+                service: service,
+                created_at: new Date(),
+                status: 'AGUARDANDO'
+            };
+            localWaitList.push(newTicket);
+            console.log(`[MEMÓRIA] Nova senha: ${ticketNumberStr}`);
+            return res.status(201).json(newTicket);
+        }
+    } catch (error) {
+        console.error('Erro no servidor:', error);
+        res.status(500).json({ error: 'Erro interno ao gerar senha.' });
+    }
+});
+
+// ---------- CRUD ROUTES ----------
+
+// GET all tickets (with optional pagination & status filter)
+app.get('/api/tickets', async (req, res) => {
+    const { page = 1, limit = 20, status } = req.query;
+    const offset = (page - 1) * limit;
+    try {
+        if (dbReady) {
+            let query = `SELECT * FROM waiting_tickets`;
+            const params = [];
+            if (status) {
+                params.push(status);
+                query += ` WHERE status = $${params.length}`;
+            }
+            query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+            params.push(limit, offset);
+            const result = await pool.query(query, params);
+            return res.json({ tickets: result.rows, page: Number(page), limit: Number(limit) });
+        } else {
+            // memory mode – filter & paginate in‑memory
+            let filtered = localWaitList;
+            if (status) filtered = filtered.filter(t => t.status === status);
+            const paginated = filtered.slice(offset, offset + Number(limit));
+            return res.json({ tickets: paginated, page: Number(page), limit: Number(limit) });
+        }
+    } catch (e) {
+        console.error('Erro ao listar tickets:', e);
+        res.status(500).json({ error: 'Erro interno ao listar tickets.' });
+    }
+});
+
+// GET ticket by ID
+app.get('/api/tickets/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (dbReady) {
+            const result = await pool.query('SELECT * FROM waiting_tickets WHERE id = $1', [id]);
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            return res.json(result.rows[0]);
+        } else {
+            const ticket = localWaitList.find(t => t.id == id);
+            if (!ticket) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            return res.json(ticket);
+        }
+    } catch (e) {
+        console.error('Erro ao buscar ticket:', e);
+        res.status(500).json({ error: 'Erro interno ao buscar ticket.' });
+    }
+});
+
+// PATCH ticket (e.g., update status)
+app.patch('/api/tickets/:id', async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ error: 'Campo status é obrigatório.' });
+    try {
+        if (dbReady) {
+            const result = await pool.query('UPDATE waiting_tickets SET status = $1 WHERE id = $2 RETURNING *', [status, id]);
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            return res.json(result.rows[0]);
+        } else {
+            const ticket = localWaitList.find(t => t.id == id);
+            if (!ticket) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            ticket.status = status;
+            return res.json(ticket);
+        }
+    } catch (e) {
+        console.error('Erro ao atualizar ticket:', e);
+        res.status(500).json({ error: 'Erro interno ao atualizar ticket.' });
+    }
+});
+
+// DELETE ticket
+app.delete('/api/tickets/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (dbReady) {
+            const result = await pool.query('DELETE FROM waiting_tickets WHERE id = $1 RETURNING *', [id]);
+            if (result.rowCount === 0) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            return res.json({ message: 'Ticket removido.', ticket: result.rows[0] });
+        } else {
+            const index = localWaitList.findIndex(t => t.id == id);
+            if (index === -1) return res.status(404).json({ error: 'Ticket não encontrado.' });
+            const [removed] = localWaitList.splice(index, 1);
+            return res.json({ message: 'Ticket removido.', ticket: removed });
+        }
+    } catch (e) {
+        console.error('Erro ao remover ticket:', e);
+        res.status(500).json({ error: 'Erro interno ao remover ticket.' });
+    }
+});
+
+// ---------- END CRUD ----------
+
+// ---------- USER ROUTES ----------
+
+// POST - Register new user
+app.post('/api/users/register', async (req, res) => {
+    const { username, password, fullName, email, cpf, profilePicture } = req.body;
+
+    if (!username || !password || !fullName) {
+        return res.status(400).json({ error: 'Campos obrigatórios: username, password, fullName' });
+    }
+
+    try {
+        if (dbReady) {
+            // Check if username already exists
+            const checkUser = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+            if (checkUser.rowCount > 0) {
+                return res.status(409).json({ error: 'Nome de usuário já existe.' });
+            }
+
+            // Insert new user
+            const insertQuery = `
+                INSERT INTO users (username, password, full_name, email, cpf, profile_picture, role)
+                VALUES ($1, $2, $3, $4, $5, $6, 'user')
+                RETURNING id, username, full_name, email, cpf, profile_picture, role, created_at;`;
+
+            const result = await pool.query(insertQuery, [username, password, fullName, email, cpf, profilePicture]);
+            console.log(`[SUPABASE/DB] Novo usuário registrado: ${username}`);
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível. Modo memória não suporta usuários.' });
+        }
+    } catch (error) {
+        console.error('Erro ao fazer login:', error);
+        res.status(500).json({ error: 'Erro interno ao fazer login.' });
+    }
+});
+
+// GET all users (admin only)
+app.get('/api/users', async (req, res) => {
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'SELECT id, username, full_name, email, cpf, profile_picture, role, created_at FROM users ORDER BY created_at DESC'
+            );
+            return res.json({ users: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao listar usuários:', error);
+        res.status(500).json({ error: 'Erro interno ao listar usuários.' });
+    }
+});
+
+// PATCH user (update role/permissions)
+app.patch('/api/users/:id', async (req, res) => {
+    const { id } = req.params;
+    const { role, fullName, email, cpf } = req.body;
+
+    try {
+        if (dbReady) {
+            const updates = [];
+            const params = [];
+            let paramCount = 1;
+
+            if (role) {
+                updates.push(`role = $${paramCount++}`);
+                params.push(role);
+            }
+            if (fullName) {
+                updates.push(`full_name = $${paramCount++}`);
+                params.push(fullName);
+            }
+            if (email !== undefined) {
+                updates.push(`email = $${paramCount++}`);
+                params.push(email);
+            }
+            if (cpf !== undefined) {
+                updates.push(`cpf = $${paramCount++}`);
+                params.push(cpf);
+            }
+
+            if (updates.length === 0) {
+                return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
+            }
+
+            params.push(id);
+            const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, username, full_name, email, cpf, profile_picture, role, created_at`;
+
+            const result = await pool.query(query, params);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Usuário não encontrado.' });
+            }
+
+            console.log(`[SUPABASE/DB] Usuário atualizado: ${result.rows[0].username}`);
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar usuário:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar usuário.' });
+    }
+});
+
+// DELETE user
+app.delete('/api/users/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'DELETE FROM users WHERE id = $1 RETURNING username',
+                [id]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Usuário não encontrado.' });
+            }
+
+            console.log(`[SUPABASE/DB] Usuário removido: ${result.rows[0].username}`);
+            return res.json({ message: 'Usuário removido com sucesso.' });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao remover usuário:', error);
+        res.status(500).json({ error: 'Erro interno ao remover usuário.' });
+    }
+});
+
+// ---------- END USER ROUTES ----------
+
+// ---------- DESK ROUTES ----------
+
+// GET all desks
+app.get('/api/desks', async (req, res) => {
+    try {
+        if (dbReady) {
+            const result = await pool.query('SELECT * FROM service_desks ORDER BY id');
+            return res.json({ desks: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao listar mesas:', error);
+        res.status(500).json({ error: 'Erro interno ao listar mesas.' });
+    }
+});
+
+// GET desk by ID
+app.get('/api/desks/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        if (dbReady) {
+            const result = await pool.query('SELECT * FROM service_desks WHERE id = $1', [id]);
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Mesa não encontrada.' });
+            }
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar mesa:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar mesa.' });
+    }
+});
+
+// PATCH desk (login/logout/update)
+app.patch('/api/desks/:id', async (req, res) => {
+    const { id } = req.params;
+    const { user_id, user_display_name, current_ticket, current_ticket_info, service_start_time, services } = req.body;
+
+    try {
+        if (dbReady) {
+            const updates = [];
+            const params = [];
+            let paramCount = 1;
+
+            if (user_id !== undefined) {
+                updates.push(`user_id = $${paramCount++}`);
+                params.push(user_id);
+            }
+            if (user_display_name !== undefined) {
+                updates.push(`user_display_name = $${paramCount++}`);
+                params.push(user_display_name);
+            }
+            if (current_ticket !== undefined) {
+                updates.push(`current_ticket = $${paramCount++}`);
+                params.push(current_ticket);
+            }
+            if (current_ticket_info !== undefined) {
+                updates.push(`current_ticket_info = $${paramCount++}`);
+                params.push(JSON.stringify(current_ticket_info));
+            }
+            if (service_start_time !== undefined) {
+                updates.push(`service_start_time = $${paramCount++}`);
+                params.push(service_start_time);
+            }
+            if (services !== undefined) {
+                updates.push(`services = $${paramCount++}`);
+                params.push(services);
+            }
+
+            updates.push(`updated_at = NOW()`);
+            params.push(id);
+
+            const query = `UPDATE service_desks SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+            const result = await pool.query(query, params);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Mesa não encontrada.' });
+            }
+
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar mesa:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar mesa.' });
+    }
+});
+
+// ---------- END DESK ROUTES ----------
+
+// ---------- HISTORY ROUTES ----------
+
+// GET called history
+app.get('/api/called-history', async (req, res) => {
+    const { limit = 100 } = req.query;
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'SELECT * FROM called_history ORDER BY timestamp DESC LIMIT $1',
+                [limit]
+            );
+            return res.json({ history: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar histórico:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar histórico.' });
+    }
+});
+
+// POST called history
+app.post('/api/called-history', async (req, res) => {
+    const { ticket_number, desk_number, ticket_type, timestamp } = req.body;
+
+    if (!ticket_number || !desk_number || !ticket_type || !timestamp) {
+        return res.status(400).json({ error: 'Dados incompletos.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO called_history (ticket_number, desk_number, ticket_type, timestamp) VALUES ($1, $2, $3, $4) RETURNING *',
+                [ticket_number, desk_number, ticket_type, timestamp]
+            );
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao registrar histórico:', error);
+        res.status(500).json({ error: 'Erro interno ao registrar histórico.' });
+    }
+});
+
+// GET completed services
+app.get('/api/completed-services', async (req, res) => {
+    const { limit = 100 } = req.query;
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'SELECT * FROM completed_services ORDER BY completed_timestamp DESC LIMIT $1',
+                [limit]
+            );
+            return res.json({ services: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar serviços completados:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar serviços.' });
+    }
+});
+
+// POST completed service
+app.post('/api/completed-services', async (req, res) => {
+    const { ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service } = req.body;
+
+    if (!ticket_number || !desk_id || !user_id || !user_name || service_duration === undefined || wait_time === undefined || !completed_timestamp || !service) {
+        return res.status(400).json({ error: 'Dados incompletos.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO completed_services (ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+                [ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service]
+            );
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao registrar serviço completado:', error);
+        res.status(500).json({ error: 'Erro interno ao registrar serviço.' });
+    }
+});
+
+// GET abandoned tickets
+app.get('/api/abandoned-tickets', async (req, res) => {
+    const { limit = 100 } = req.query;
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'SELECT * FROM abandoned_tickets ORDER BY abandoned_timestamp DESC LIMIT $1',
+                [limit]
+            );
+            return res.json({ tickets: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar senhas abandonadas:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar senhas abandonadas.' });
+    }
+});
+
+// POST abandoned ticket
+app.post('/api/abandoned-tickets', async (req, res) => {
+    const { ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service } = req.body;
+
+    if (!ticket_number || !desk_id || !user_id || !user_name || !called_timestamp || !abandoned_timestamp || !ticket_type || wait_time === undefined || !service) {
+        return res.status(400).json({ error: 'Dados incompletos.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO abandoned_tickets (ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+                [ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service]
+            );
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao registrar senha abandonada:', error);
+        res.status(500).json({ error: 'Erro interno ao registrar senha abandonada.' });
+    }
+});
+
+// DELETE abandoned ticket (for reinsert)
+app.delete('/api/abandoned-tickets/:ticketNumber', async (req, res) => {
+    const { ticketNumber } = req.params;
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'DELETE FROM abandoned_tickets WHERE ticket_number = $1 RETURNING *',
+                [ticketNumber]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Senha abandonada não encontrada.' });
+            }
+
+            return res.json({ message: 'Senha removida das abandonadas.', ticket: result.rows[0] });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao remover senha abandonada:', error);
+        res.status(500).json({ error: 'Erro interno ao remover senha abandonada.' });
+    }
+});
+
+// ---------- END HISTORY ROUTES ----------
+
+// ---------- AGENDA ROUTES ----------
+
+// GET agenda
+app.get('/api/agenda', async (req, res) => {
+    const { status } = req.query;
+    try {
+        if (dbReady) {
+            let query = 'SELECT * FROM agenda';
+            const params = [];
+
+            if (status) {
+                query += ' WHERE status = $1';
+                params.push(status);
+            }
+
+            query += ' ORDER BY data_agendamento ASC';
+
+            const result = await pool.query(query, params);
+            return res.json({ agenda: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar agenda:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar agenda.' });
+    }
+});
+
+// POST agenda entry
+app.post('/api/agenda', async (req, res) => {
+    const { id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro } = req.body;
+
+    if (!id || !ticket_number || !nome_completo || !data_agendamento || !horario || !servico || !data_do_registro) {
+        return res.status(400).json({ error: 'Dados obrigatórios faltando.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO agenda (id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
+                [id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro, 'AGENDADO']
+            );
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao criar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno ao criar agendamento.' });
+    }
+});
+
+// PATCH agenda entry
+app.patch('/api/agenda/:id', async (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+
+    try {
+        if (dbReady) {
+            const fields = [];
+            const params = [];
+            let paramCount = 1;
+
+            Object.keys(updates).forEach(key => {
+                fields.push(`${key} = $${paramCount++}`);
+                params.push(updates[key]);
+            });
+
+            params.push(id);
+            const query = `UPDATE agenda SET ${fields.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+
+            const result = await pool.query(query, params);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Agendamento não encontrado.' });
+            }
+
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar agendamento.' });
+    }
+});
+
+// DELETE agenda entry (cancel)
+app.delete('/api/agenda/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                "UPDATE agenda SET status = 'CANCELADO' WHERE id = $1 RETURNING *",
+                [id]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Agendamento não encontrado.' });
+            }
+
+            return res.json({ message: 'Agendamento cancelado.', entry: result.rows[0] });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao cancelar agendamento:', error);
+        res.status(500).json({ error: 'Erro interno ao cancelar agendamento.' });
+    }
+});
+
+// ---------- END AGENDA ROUTES ----------
+
+// ---------- CONFIG ROUTES ----------
+
+// GET config by key
+app.get('/api/config/:key', async (req, res) => {
+    const { key } = req.params;
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'SELECT * FROM system_config WHERE config_key = $1',
+                [key]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Configuração não encontrada.' });
+            }
+
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar configuração:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar configuração.' });
+    }
+});
+
+// PUT config
+app.put('/api/config/:key', async (req, res) => {
+    const { key } = req.params;
+    const { value } = req.body;
+
+    if (value === undefined) {
+        return res.status(400).json({ error: 'Valor é obrigatório.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO system_config (config_key, config_value) VALUES ($1, $2) ON CONFLICT (config_key) DO UPDATE SET config_value = $2, updated_at = NOW() RETURNING *',
+                [key, value]
+            );
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar configuração:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar configuração.' });
+    }
+});
+
+// ---------- END CONFIG ROUTES ----------
+
+// ---------- ACTIVITY LOG ROUTES ----------
+
+// GET activity logs
+app.get('/api/activity-logs', async (req, res) => {
+    const { limit = 100, user_id } = req.query;
+
+    try {
+        if (dbReady) {
+            let query = 'SELECT * FROM activity_logs';
+            const params = [];
+
+            if (user_id) {
+                query += ' WHERE user_id = $1';
+                params.push(user_id);
+            }
+
+            query += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}`;
+            params.push(limit);
+
+            const result = await pool.query(query, params);
+            return res.json({ logs: result.rows });
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao buscar logs:', error);
+        res.status(500).json({ error: 'Erro interno ao buscar logs.' });
+    }
+});
+
+// POST activity log
+app.post('/api/activity-logs', async (req, res) => {
+    const { id, user_id, user_name, timestamp, type, duration } = req.body;
+
+    if (!id || !user_id || !user_name || !timestamp || !type) {
+        return res.status(400).json({ error: 'Dados obrigatórios faltando.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'INSERT INTO activity_logs (id, user_id, user_name, timestamp, type, duration) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+                [id, user_id, user_name, timestamp, type, duration]
+            );
+            return res.status(201).json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao registrar log:', error);
+        res.status(500).json({ error: 'Erro interno ao registrar log.' });
+    }
+});
+
+// PATCH activity log (update duration for logout)
+app.patch('/api/activity-logs/:id', async (req, res) => {
+    const { id } = req.params;
+    const { duration } = req.body;
+
+    if (duration === undefined) {
+        return res.status(400).json({ error: 'Duration é obrigatório.' });
+    }
+
+    try {
+        if (dbReady) {
+            const result = await pool.query(
+                'UPDATE activity_logs SET duration = $1 WHERE id = $2 RETURNING *',
+                [duration, id]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Log não encontrado.' });
+            }
+
+            return res.json(result.rows[0]);
+        } else {
+            return res.status(503).json({ error: 'Banco de dados não disponível.' });
+        }
+    } catch (error) {
+        console.error('Erro ao atualizar log:', error);
+        res.status(500).json({ error: 'Erro interno ao atualizar log.' });
+    }
+});
+
+// ---------- END ACTIVITY LOG ROUTES ----------
