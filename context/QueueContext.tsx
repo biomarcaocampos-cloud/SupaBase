@@ -89,9 +89,13 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Load initial state from backend
   const refreshState = useCallback(async () => {
     try {
+      console.log('🔄 [REFRESH] Iniciando atualização do estado...');
+
       // Load tickets
       const ticketsResponse = await api.tickets.getAll({ status: 'AGUARDANDO' });
       const tickets = ticketsResponse.tickets || [];
+      console.log('📝 [REFRESH] Senhas aguardando recebidas do backend:', tickets.length);
+      console.log('📝 [REFRESH] Detalhes das senhas:', tickets);
 
       const waitingNormal = tickets
         .filter((t: any) => t.ticket_type === 'NORMAL')
@@ -102,6 +106,8 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           service: t.service as ServiceType,
         }));
 
+      console.log('📝 [REFRESH] Senhas NORMAIS filtradas:', waitingNormal.length);
+
       const waitingPreferential = tickets
         .filter((t: any) => t.ticket_type === 'PREFERENCIAL')
         .map((t: any) => ({
@@ -111,13 +117,30 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           service: t.service as ServiceType,
         }));
 
+      console.log('📝 [REFRESH] Senhas PREFERENCIAIS filtradas:', waitingPreferential.length);
+
       // Load desks
       const desksResponse = await api.desks.getAll();
       const backendDesks = desksResponse.desks || [];
+      console.log('🪑 [REFRESH] Mesas recebidas do backend:', backendDesks.length);
 
       const desks = initialDesks.map(defaultDesk => {
         const backendDesk = backendDesks.find((d: any) => d.id === defaultDesk.id);
         if (!backendDesk) return defaultDesk;
+
+        // Parse current_ticket_info only if it's a string
+        let parsedTicketInfo = null;
+        if (backendDesk.current_ticket_info) {
+          if (typeof backendDesk.current_ticket_info === 'string') {
+            try {
+              parsedTicketInfo = JSON.parse(backendDesk.current_ticket_info);
+            } catch (e) {
+              console.error('❌ Erro ao fazer parse de current_ticket_info:', e);
+            }
+          } else {
+            parsedTicketInfo = backendDesk.current_ticket_info;
+          }
+        }
 
         return {
           ...defaultDesk,
@@ -126,65 +149,88 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             displayName: backendDesk.user_display_name || '',
           } : null,
           currentTicket: backendDesk.current_ticket,
-          currentTicketInfo: backendDesk.current_ticket_info ? JSON.parse(backendDesk.current_ticket_info) : null,
+          currentTicketInfo: parsedTicketInfo,
           serviceStartTime: backendDesk.service_start_time,
           services: backendDesk.services || [],
         };
       });
 
       // Load history
-      const historyResponse = await api.history.getCalledHistory(100);
-      const calledHistory = (historyResponse.history || []).map((h: any) => ({
-        ticketNumber: h.ticket_number,
-        deskNumber: h.desk_number,
-        timestamp: h.timestamp,
-        type: h.ticket_type,
-      }));
+      let calledHistory = [];
+      try {
+        const historyResponse = await api.history.getCalledHistory(100);
+        calledHistory = (historyResponse.history || []).map((h: any) => ({
+          ticketNumber: h.ticket_number,
+          deskNumber: h.desk_number,
+          timestamp: h.timestamp,
+          type: h.ticket_type,
+        }));
+        console.log('📜 [REFRESH] Histórico de chamadas:', calledHistory.length);
+      } catch (error) {
+        console.warn('⚠️ [REFRESH] Erro ao carregar histórico de chamadas:', error);
+      }
 
       // Load completed services
-      const completedResponse = await api.history.getCompletedServices(100);
-      const completedServices = (completedResponse.services || []).map((s: any) => ({
-        ticketNumber: s.ticket_number,
-        deskId: s.desk_id,
-        userId: s.user_id,
-        userName: s.user_name,
-        serviceDuration: s.service_duration,
-        waitTime: s.wait_time,
-        completedTimestamp: s.completed_timestamp,
-        service: s.service,
-      }));
+      let completedServices = [];
+      try {
+        const completedResponse = await api.history.getCompletedServices(100);
+        completedServices = (completedResponse.services || []).map((s: any) => ({
+          ticketNumber: s.ticket_number,
+          deskId: s.desk_id,
+          userId: s.user_id,
+          userName: s.user_name,
+          serviceDuration: s.service_duration,
+          waitTime: s.wait_time,
+          completedTimestamp: s.completed_timestamp,
+          service: s.service,
+        }));
+        console.log('✅ [REFRESH] Serviços completados:', completedServices.length);
+      } catch (error) {
+        console.warn('⚠️ [REFRESH] Erro ao carregar serviços completados:', error);
+      }
 
       // Load abandoned tickets
-      const abandonedResponse = await api.history.getAbandonedTickets(100);
-      const abandonedTickets = (abandonedResponse.tickets || []).map((t: any) => ({
-        ticketNumber: t.ticket_number,
-        deskId: t.desk_id,
-        userId: t.user_id,
-        userName: t.user_name,
-        calledTimestamp: t.called_timestamp,
-        abandonedTimestamp: t.abandoned_timestamp,
-        type: t.ticket_type,
-        waitTime: t.wait_time,
-        service: t.service,
-      }));
+      let abandonedTickets = [];
+      try {
+        const abandonedResponse = await api.history.getAbandonedTickets(100);
+        abandonedTickets = (abandonedResponse.tickets || []).map((t: any) => ({
+          ticketNumber: t.ticket_number,
+          deskId: t.desk_id,
+          userId: t.user_id,
+          userName: t.user_name,
+          calledTimestamp: t.called_timestamp,
+          abandonedTimestamp: t.abandoned_timestamp,
+          type: t.ticket_type,
+          waitTime: t.wait_time,
+          service: t.service,
+        }));
+        console.log('❌ [REFRESH] Senhas abandonadas:', abandonedTickets.length);
+      } catch (error) {
+        console.warn('⚠️ [REFRESH] Erro ao carregar senhas abandonadas:', error);
+      }
 
       // Load agenda
-      const agendaResponse = await api.agenda.getAll();
-      const agenda = (agendaResponse.agenda || []).map((a: any) => ({
-        id: a.id,
-        ticketNumber: a.ticket_number,
-        nomeCompleto: a.nome_completo,
-        cpf: a.cpf,
-        telefone: a.telefone,
-        email: a.email,
-        dataAgendamento: a.data_agendamento,
-        horario: a.horario,
-        servico: a.servico,
-        observacoes: a.observacoes,
-        documentosNecessarios: a.documentos_necessarios || [],
-        data_do_registro: a.data_do_registro,
-        status: a.status,
-      }));
+      let agenda = [];
+      try {
+        const agendaResponse = await api.agenda.getAll();
+        agenda = (agendaResponse.agenda || []).map((a: any) => ({
+          id: a.id,
+          ticketNumber: a.ticket_number,
+          nomeCompleto: a.nome_completo,
+          cpf: a.cpf,
+          telefone: a.telefone,
+          email: a.email,
+          dataAgendamento: a.data_agendamento,
+          horario: a.horario,
+          servico: a.servico,
+          observacoes: a.observacoes,
+          documentosNecessarios: a.documentos_necessarios || [],
+          data_do_registro: a.data_do_registro,
+          status: a.status,
+        }));
+      } catch (error) {
+        console.warn('⚠️ [REFRESH] Erro ao carregar agenda:', error);
+      }
 
       // Load config
       // Backend returns { value: "..." } but we might be expecting config_value. Let's handle both.
@@ -214,9 +260,14 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         alertMessage,
       });
 
-      console.log('✅ Estado carregado do backend');
+      console.log('✅ [REFRESH] Estado atualizado com sucesso!');
+      console.log('📊 [REFRESH] Resumo:');
+      console.log('   - Normais aguardando:', waitingNormal.length);
+      console.log('   - Preferenciais aguardando:', waitingPreferential.length);
+      console.log('   - Serviços completados:', completedServices.length);
+      console.log('   - Abandonadas:', abandonedTickets.length);
     } catch (error) {
-      console.warn('⚠️ Erro ao carregar estado do backend:', error);
+      console.error('❌ [REFRESH] Erro ao carregar estado do backend:', error);
       // Keep current state if load fails
     }
   }, []);
@@ -225,6 +276,15 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     refreshState();
   }, []);
+
+  // Auto-refresh every 5 seconds to stay in sync with database
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshState();
+    }, 5000); // 5 seconds
+
+    return () => clearInterval(interval);
+  }, [refreshState]);
 
   const finalizeCurrentTicket = async (desk: ServiceDesk, currentState: QueueState): Promise<QueueState> => {
     if (!desk.user || !desk.currentTicketInfo) {

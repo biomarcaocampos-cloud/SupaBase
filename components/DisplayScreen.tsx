@@ -20,17 +20,17 @@ const initAudioContext = (): AudioContext | null => {
 };
 
 const playListUpdateSound = (ctx: AudioContext) => {
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    oscillator.type = 'triangle';
-    oscillator.frequency.setValueAtTime(220, ctx.currentTime);
-    gainNode.gain.setValueAtTime(0, ctx.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-    gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
-    oscillator.start(ctx.currentTime);
-    oscillator.stop(ctx.currentTime + 0.1);
+  const oscillator = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(ctx.destination);
+  oscillator.type = 'triangle';
+  oscillator.frequency.setValueAtTime(220, ctx.currentTime);
+  gainNode.gain.setValueAtTime(0, ctx.currentTime);
+  gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+  gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
+  oscillator.start(ctx.currentTime);
+  oscillator.stop(ctx.currentTime + 0.1);
 };
 
 const playTicketCallSound = (type: 'NORMAL' | 'PREFERENCIAL') => {
@@ -61,10 +61,10 @@ const playTicketCallSound = (type: 'NORMAL' | 'PREFERENCIAL') => {
 };
 
 const getDisplayName = (fullName: string): string => {
-    if (!fullName) return '';
-    const names = fullName.trim().split(' ');
-    if (names.length === 1) return names[0];
-    return `${names[0]} ${names[names.length - 1]}`;
+  if (!fullName) return '';
+  const names = fullName.trim().split(' ');
+  if (names.length === 1) return names[0];
+  return `${names[0]} ${names[names.length - 1]}`;
 };
 
 interface DisplayScreenProps {
@@ -182,18 +182,18 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
       <div className="flex-[3] flex flex-col justify-center items-center p-4 border-b-2 border-gray-800">
         <h2 className="text-3xl font-bold text-center text-gray-400 mb-4 uppercase">Últimas Chamadas</h2>
         <div className="w-full max-w-4xl px-2">
-            {olderCalledTickets.length > 0 ? (
-                <div className="grid grid-cols-2 gap-4">
-                    {olderCalledTickets.map((ticket) => (
-                    <div key={ticket.timestamp} className="grid grid-cols-2 text-center p-3 text-4xl lg:text-5xl font-mono bg-gray-800 rounded-md">
-                        <div className="text-gray-200">{ticket.ticketNumber}</div>
-                        <div className="text-gray-200">{String(ticket.deskNumber).padStart(2, '0')}</div>
-                    </div>
-                    ))}
+          {olderCalledTickets.length > 0 ? (
+            <div className="grid grid-cols-2 gap-4">
+              {olderCalledTickets.map((ticket) => (
+                <div key={ticket.timestamp} className="grid grid-cols-2 text-center p-3 text-4xl lg:text-5xl font-mono bg-gray-800 rounded-md">
+                  <div className="text-gray-200">{ticket.ticketNumber}</div>
+                  <div className="text-gray-200">{String(ticket.deskNumber).padStart(2, '0')}</div>
                 </div>
-            ) : (
-                <div className="text-center p-8 text-gray-500">Nenhuma senha chamada anteriormente.</div>
-            )}
+              ))}
+            </div>
+          ) : (
+            <div className="text-center p-8 text-gray-500">Nenhuma senha chamada anteriormente.</div>
+          )}
         </div>
       </div>
 
