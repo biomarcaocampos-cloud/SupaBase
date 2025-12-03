@@ -542,8 +542,9 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
     const handleTicketSearch = (e: React.FormEvent) => {
         e.preventDefault();
         setSearchedTicket(ticketSearchQuery);
-        // Search in current state only (historical search would need backend API)
+
         const searchResults = [
+            // Senhas completadas
             ...state.completedServices.filter(s => s.ticketNumber.toUpperCase() === ticketSearchQuery.toUpperCase()).map(s => ({
                 date: new Date(s.completedTimestamp),
                 status: 'Atendido',
@@ -551,14 +552,42 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                 deskId: s.deskId,
                 completedTimestamp: s.completedTimestamp,
             })),
+            // Senhas abandonadas
             ...state.abandonedTickets.filter(t => t.ticketNumber.toUpperCase() === ticketSearchQuery.toUpperCase()).map(t => ({
                 date: new Date(t.abandonedTimestamp),
                 status: 'Abandonado',
                 user: t.userName,
                 deskId: t.deskId,
                 abandonedTimestamp: t.abandonedTimestamp,
-            }))
+            })),
+            // Senhas aguardando (Normais)
+            ...state.waitingNormal.filter(t => t.number.toUpperCase() === ticketSearchQuery.toUpperCase()).map(t => ({
+                date: new Date(t.dispenseTimestamp),
+                status: 'Aguardando na Fila (Normal)',
+                user: 'N/A',
+                deskId: 0,
+                completedTimestamp: t.dispenseTimestamp,
+            })),
+            // Senhas aguardando (Preferenciais)
+            ...state.waitingPreferential.filter(t => t.number.toUpperCase() === ticketSearchQuery.toUpperCase()).map(t => ({
+                date: new Date(t.dispenseTimestamp),
+                status: 'Aguardando na Fila (Preferencial)',
+                user: 'N/A',
+                deskId: 0,
+                completedTimestamp: t.dispenseTimestamp,
+            })),
+            // Senhas em atendimento nas mesas
+            ...state.desks
+                .filter(d => d.currentTicketInfo && d.currentTicketInfo.number.toUpperCase() === ticketSearchQuery.toUpperCase())
+                .map(d => ({
+                    date: new Date(d.currentTicketInfo!.dispenseTimestamp),
+                    status: d.serviceStartTime ? 'Em Atendimento' : 'Chamado (Aguardando Iniciar)',
+                    user: d.user?.displayName || 'N/A',
+                    deskId: d.id,
+                    completedTimestamp: d.currentTicketInfo!.dispenseTimestamp,
+                }))
         ];
+
         setTicketSearchResults(searchResults);
     };
 
