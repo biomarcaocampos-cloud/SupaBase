@@ -11,21 +11,21 @@ declare global {
 
 // Define colors for each service type for better visual distinction in dark mode
 const serviceColors: Record<ServiceType, { border: string; hoverBg: string; text: string }> = {
-    'TRIAGEM': {
-        border: 'border-blue-500 hover:border-blue-400',
-        hoverBg: 'hover:bg-gray-700',
-        text: 'text-blue-300'
-    },
-    'ATERMACAO': {
-        border: 'border-orange-500 hover:border-orange-400',
-        hoverBg: 'hover:bg-gray-700',
-        text: 'text-orange-300'
-    },
-    'ATENDIMENTO': {
-        border: 'border-green-500 hover:border-green-400',
-        hoverBg: 'hover:bg-gray-700',
-        text: 'text-green-300'
-    }
+  'TRIAGEM': {
+    border: 'border-blue-500 hover:border-blue-400',
+    hoverBg: 'hover:bg-gray-700',
+    text: 'text-blue-300'
+  },
+  'ATERMACAO': {
+    border: 'border-orange-500 hover:border-orange-400',
+    hoverBg: 'hover:bg-gray-700',
+    text: 'text-orange-300'
+  },
+  'ATENDIMENTO': {
+    border: 'border-green-500 hover:border-green-400',
+    hoverBg: 'hover:bg-gray-700',
+    text: 'text-green-300'
+  }
 };
 
 export const TicketDispenser: React.FC = () => {
@@ -47,18 +47,18 @@ export const TicketDispenser: React.FC = () => {
     if (isDispensing || !selectedType) return;
     setIsDispensing(true);
     try {
-        const newTicketNumber = await dispenseTicket(selectedType, service);
-        setLastTicket({ number: newTicketNumber, service });
-        setStep('confirmation');
+      const newTicketNumber = await dispenseTicket(selectedType, service);
+      setLastTicket({ number: newTicketNumber, service });
+      setStep('confirmation');
     } catch (error) {
-        console.error("Failed to dispense ticket:", error);
-        if (error instanceof Error) {
-            alert(error.message);
-        } else {
-            alert('Ocorreu um erro desconhecido ao emitir a senha.');
-        }
+      console.error("Failed to dispense ticket:", error);
+      if (error instanceof Error) {
+        alert(error.message);
+      } else {
+        alert('Ocorreu um erro desconhecido ao emitir a senha.');
+      }
     } finally {
-        setIsDispensing(false);
+      setIsDispensing(false);
     }
   };
 
@@ -68,23 +68,23 @@ export const TicketDispenser: React.FC = () => {
     setIsDispensing(true);
     setReinsertMessage(null);
     try {
-        const result = await reinsertTicket(reinsertTicketNumber);
-        if (result.success) {
-            setReinsertMessage({ type: 'success', text: result.message });
-        } else {
-            let errorMessage = result.message;
-            if (result.details) {
-                const { deskId, user, timestamp } = result.details;
-                const time = new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                errorMessage = `Essa senha já foi atendida na Mesa ${deskId} por ${user} às ${time}.`;
-            }
-            setReinsertMessage({ type: 'error', text: errorMessage });
+      const result = await reinsertTicket(reinsertTicketNumber);
+      if (result.success) {
+        setReinsertMessage({ type: 'success', text: result.message });
+      } else {
+        let errorMessage = result.message;
+        if (result.details) {
+          const { deskId, user, timestamp } = result.details;
+          const time = new Date(timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          errorMessage = `Essa senha já foi atendida na Mesa ${deskId} por ${user} às ${time}.`;
         }
+        setReinsertMessage({ type: 'error', text: errorMessage });
+      }
     } catch (error) {
-        setReinsertMessage({ type: 'error', text: 'Ocorreu um erro ao reinserir a senha.' });
+      setReinsertMessage({ type: 'error', text: 'Ocorreu um erro ao reinserir a senha.' });
     } finally {
-        setIsDispensing(false);
-        setReinsertTicketNumber('');
+      setIsDispensing(false);
+      setReinsertTicketNumber('');
     }
   };
 
@@ -140,15 +140,15 @@ export const TicketDispenser: React.FC = () => {
 
     const printWindow = window.open('', '_blank', 'width=300,height=400');
     if (printWindow) {
-        printWindow.document.write(ticketHTML);
-        printWindow.document.close();
-        printWindow.focus();
-        printWindow.print();
-        setTimeout(() => {
-            printWindow.close();
-        }, 500);
+      printWindow.document.write(ticketHTML);
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+      setTimeout(() => {
+        printWindow.close();
+      }, 500);
     } else {
-        alert('O bloqueador de pop-ups pode estar impedindo a impressão. Por favor, habilite pop-ups para este site.');
+      alert('O bloqueador de pop-ups pode estar impedindo a impressão. Por favor, habilite pop-ups para este site.');
     }
   };
 
@@ -163,13 +163,13 @@ export const TicketDispenser: React.FC = () => {
               <button onClick={() => handleTypeSelect('PREFERENCIAL')} disabled={!isServerOnline} className="w-full bg-yellow-500 text-gray-900 font-bold py-6 px-4 rounded-xl text-2xl hover:bg-yellow-600 transition-transform transform hover:scale-105 duration-300 shadow-lg disabled:bg-gray-600 disabled:cursor-not-allowed disabled:transform-none">Atendimento Preferencial</button>
             </div>
             <div className="mt-8">
-                <button 
-                    onClick={() => setStep('reinsert')} 
-                    disabled={!isServerOnline}
-                    className="w-full bg-gray-300 text-gray-800 font-semibold py-3 px-4 rounded-xl text-lg hover:bg-gray-400 transition-colors duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                >
-                    Reinserir Senha
-                </button>
+              <button
+                onClick={() => setStep('reinsert')}
+                disabled={!isServerOnline}
+                className="w-full bg-gray-300 text-gray-800 font-semibold py-3 px-4 rounded-xl text-lg hover:bg-gray-400 transition-colors duration-300 disabled:bg-gray-500 disabled:cursor-not-allowed"
+              >
+                Reinserir Senha
+              </button>
             </div>
           </>
         );
@@ -183,15 +183,15 @@ export const TicketDispenser: React.FC = () => {
                 const serviceType = key as ServiceType;
                 const colors = serviceColors[serviceType];
                 return (
-                    <button
-                        key={key}
-                        onClick={() => handleServiceSelect(serviceType)}
-                        disabled={isDispensing || !isServerOnline}
-                        className={`w-full text-left bg-gray-800 border-2 p-4 rounded-lg transition-colors duration-200 disabled:opacity-50 ${colors.border} ${colors.hoverBg}`}
-                    >
-                        <p className={`font-bold text-xl ${colors.text}`}>{title}</p>
-                        <p className="text-gray-400">{description}</p>
-                    </button>
+                  <button
+                    key={key}
+                    onClick={() => handleServiceSelect(serviceType)}
+                    disabled={isDispensing || !isServerOnline}
+                    className={`w-full text-left bg-gray-800 border-2 p-4 rounded-lg transition-colors duration-200 disabled:opacity-50 ${colors.border} ${colors.hoverBg}`}
+                  >
+                    <p className={`font-bold text-xl ${colors.text}`}>{title}</p>
+                    <p className="text-gray-400">{description}</p>
+                  </button>
                 );
               })}
             </div>
@@ -199,29 +199,29 @@ export const TicketDispenser: React.FC = () => {
         );
       case 'reinsert':
         return (
-            <>
-                <button onClick={resetToStart} className="absolute top-4 left-4 text-red-400 font-semibold flex items-center gap-1">&larr; Voltar</button>
-                <h2 className="text-3xl font-bold text-white mb-6">Reinserir Senha</h2>
-                <p className="text-gray-400 mb-6">Digite o número da sua senha que não foi atendida. Ela será colocada novamente no final da fila.</p>
-                <form onSubmit={handleReinsertSubmit} className="space-y-4">
-                    <input
-                        type="text"
-                        value={reinsertTicketNumber}
-                        onChange={(e) => setReinsertTicketNumber(e.target.value.toUpperCase())}
-                        placeholder="Ex: N023"
-                        className="w-full text-center text-2xl font-mono p-3 border-2 bg-gray-800 border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
-                        required
-                    />
-                    <button type="submit" disabled={isDispensing || !isServerOnline} className="w-full bg-red-600 text-white font-bold py-4 rounded-xl text-xl hover:bg-red-700 transition-colors duration-300 shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed">
-                        {isDispensing ? 'Verificando...' : 'Confirmar'}
-                    </button>
-                </form>
-                {reinsertMessage && (
-                    <div className={`mt-6 p-4 rounded-lg text-center font-semibold ${reinsertMessage.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {reinsertMessage.text}
-                    </div>
-                )}
-            </>
+          <>
+            <button onClick={resetToStart} className="absolute top-4 left-4 text-red-400 font-semibold flex items-center gap-1">&larr; Voltar</button>
+            <h2 className="text-3xl font-bold text-white mb-6">Reinserir Senha</h2>
+            <p className="text-gray-400 mb-6">Digite o número da sua senha que não foi atendida. Ela será colocada novamente no final da fila.</p>
+            <form onSubmit={handleReinsertSubmit} className="space-y-4">
+              <input
+                type="text"
+                value={reinsertTicketNumber}
+                onChange={(e) => setReinsertTicketNumber(e.target.value.toUpperCase())}
+                placeholder="Ex: N023"
+                className="w-full text-center text-2xl font-mono p-3 border-2 bg-gray-800 border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                required
+              />
+              <button type="submit" disabled={isDispensing || !isServerOnline} className="w-full bg-red-600 text-white font-bold py-4 rounded-xl text-xl hover:bg-red-700 transition-colors duration-300 shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed">
+                {isDispensing ? 'Verificando...' : 'Confirmar'}
+              </button>
+            </form>
+            {reinsertMessage && (
+              <div className={`mt-6 p-4 rounded-lg text-center font-semibold ${reinsertMessage.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                {reinsertMessage.text}
+              </div>
+            )}
+          </>
         );
       case 'confirmation':
         return (
@@ -237,7 +237,7 @@ export const TicketDispenser: React.FC = () => {
               </button>
             </div>
             <button onClick={resetToStart} className="mt-8 w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-4 rounded-xl text-xl transition-colors duration-300 shadow-lg">
-                Emitir Nova Senha
+              Emitir Nova Senha
             </button>
           </>
         );
@@ -246,7 +246,7 @@ export const TicketDispenser: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-4 bg-black">
-      <div className="relative w-full max-w-md p-8 bg-gray-900 rounded-2xl text-center">
+      <div className="relative w-full max-w-2xl p-8 bg-gray-900 rounded-2xl text-center">
         {renderContent()}
         <div className="mt-10 text-sm text-gray-400">
           <p>Senhas na fila Normal: {state.waitingNormal.length}</p>

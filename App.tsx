@@ -15,6 +15,7 @@ import { RegisterScreen } from './components/auth/RegisterScreen';
 import { UserManagement } from './components/management/UserManagement';
 import { DOCUMENT_CHECKLIST } from './constants/documents';
 import { validateCPF, validateEmail } from './utils/cpfValidator';
+import { AgendaModal } from './components/AgendaModal';
 
 
 declare global {
@@ -283,6 +284,7 @@ const EditAgendaModal: React.FC<{ entry: AgendaEntry; onClose: () => void; onSav
 
 const AgendaManagement: React.FC = () => {
     const { state, cancelAgendaEntry, updateAgendaEntry } = useQueue();
+    const { currentUser } = useAuth();
     const { agenda } = state;
     const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -291,6 +293,7 @@ const AgendaManagement: React.FC = () => {
     const [nameFilter, setNameFilter] = useState('');
     const [cpfFilter, setCpfFilter] = useState('');
     const [editingEntry, setEditingEntry] = useState<AgendaEntry | null>(null);
+    const [isAgendaModalOpen, setIsAgendaModalOpen] = useState(false);
 
     const filteredAgenda = useMemo(() => {
         const hasTextFilter = nameFilter.trim() !== '' || cpfFilter.trim() !== '';
@@ -338,6 +341,12 @@ const AgendaManagement: React.FC = () => {
 
     return (
         <div className="bg-gray-900 text-white p-6 rounded-xl">
+            <div className="flex justify-end mb-6">
+                <button onClick={() => setIsAgendaModalOpen(true)} className="bg-blue-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-300 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 flex-shrink-0"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>
+                    Novo Agendamento
+                </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bg-gray-800 p-4 rounded-lg">
                 <div><label className="text-sm font-semibold text-gray-400">Data Inicial</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
                 <div><label className="text-sm font-semibold text-gray-400">Data Final</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
@@ -389,6 +398,13 @@ const AgendaManagement: React.FC = () => {
                 {filteredAgenda.length === 0 && <p className="text-center text-gray-400 py-8">Nenhum agendamento encontrado para os filtros selecionados.</p>}
             </div>
             {editingEntry && <EditAgendaModal entry={editingEntry} onClose={() => setEditingEntry(null)} onSave={updateAgendaEntry} />}
+            {isAgendaModalOpen && currentUser && (
+                <AgendaModal
+                    onClose={() => setIsAgendaModalOpen(false)}
+                    attendant={{ id: currentUser.id, name: getDisplayName(currentUser.fullName) }}
+                    ticketNumber={'MANUAL'}
+                />
+            )}
         </div>
     );
 };
@@ -445,7 +461,7 @@ const ActiveDesksModal: React.FC<{ desks: ServiceDeskType[]; onClose: () => void
     );
 };
 
-const ManagementScreen: React.FC = () => {
+const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> = ({ initialTab = 'stats' }) => {
     const { state, updateTips, setAlertMessage, clearAlertMessage } = useQueue();
     const [startDate, setStartDate] = useState(new Date());
     const [endDate, setEndDate] = useState(new Date());
@@ -455,7 +471,7 @@ const ManagementScreen: React.FC = () => {
     const [ticketSearchQuery, setTicketSearchQuery] = useState('');
     const [ticketSearchResults, setTicketSearchResults] = useState<any[] | null>(null);
     const [searchedTicket, setSearchedTicket] = useState('');
-    const [currentTab, setCurrentTab] = useState<'stats' | 'agenda' | 'users'>('stats');
+    const [currentTab, setCurrentTab] = useState<'stats' | 'agenda' | 'users'>(initialTab);
     const [showActiveDesksModal, setShowActiveDesksModal] = useState(false);
 
     const displayData = (() => {
@@ -606,25 +622,24 @@ const ManagementScreen: React.FC = () => {
 
     return (
         <div className="h-full bg-black text-white p-4 lg:p-8 overflow-y-auto">
-            <div className="max-w-7xl mx-auto">
+            <div className="w-full">
                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                    <h2 className="text-3xl font-bold">Gerenciamento</h2>
-                    <div className="flex items-center gap-2">
-                        <button onClick={generatePDFReport} className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
-                            Exportar PDF
-                        </button>
-                        <button onClick={() => setIsMessageModalOpen(true)} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg">
-                            Gerenciar Mensagens
-                        </button>
-                    </div>
-                </div>
-                <div className="border-b border-gray-700 mb-6">
-                    <nav className="flex space-x-4">
-                        <button onClick={() => setCurrentTab('stats')} className={`py-2 px-3 font-medium ${currentTab === 'stats' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400 hover:text-white'}`}>Estatísticas</button>
-                        <button onClick={() => setCurrentTab('agenda')} className={`py-2 px-3 font-medium ${currentTab === 'agenda' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400 hover:text-white'}`}>Agenda</button>
-                        <button onClick={() => setCurrentTab('users')} className={`py-2 px-3 font-medium ${currentTab === 'users' ? 'text-red-500 border-b-2 border-red-500' : 'text-gray-400 hover:text-white'}`}>Usuários</button>
-                    </nav>
+                    <h2 className="text-3xl font-bold">
+                        {currentTab === 'stats' && 'Estatísticas'}
+                        {currentTab === 'agenda' && 'Agenda'}
+                        {currentTab === 'users' && 'Gerenciamento de Usuários'}
+                    </h2>
+                    {currentTab === 'stats' && (
+                        <div className="flex items-center gap-2">
+                            <button onClick={generatePDFReport} className="bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
+                                Exportar PDF
+                            </button>
+                            <button onClick={() => setIsMessageModalOpen(true)} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg">
+                                Gerenciar Mensagens
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {currentTab === 'stats' && (
@@ -713,7 +728,7 @@ const ManagementScreen: React.FC = () => {
     );
 };
 
-type View = 'home' | 'display' | 'dispenser' | 'desk' | 'management';
+type View = 'home' | 'display' | 'dispenser' | 'desk' | 'management' | 'management_agenda' | 'management_users';
 
 const AuthFlow: React.FC = () => {
     const [view, setView] = useState<'login' | 'register'>('login');
@@ -751,8 +766,14 @@ const MainApp: React.FC = () => {
             case 'dispenser': return <TicketDispenser />;
             case 'desk': return <ServiceDesk />;
             case 'management':
-                if (currentUser?.role === 'MANAGER') return <ManagementScreen />;
+                if (currentUser?.role === 'MANAGER') return <ManagementScreen initialTab="stats" />;
                 return <HomeSelector setView={setView} />; // Fallback for non-managers
+            case 'management_agenda':
+                if (currentUser?.role === 'MANAGER') return <ManagementScreen initialTab="agenda" />;
+                return <HomeSelector setView={setView} />;
+            case 'management_users':
+                if (currentUser?.role === 'MANAGER') return <ManagementScreen initialTab="users" />;
+                return <HomeSelector setView={setView} />;
             case 'home':
             default: return <HomeSelector setView={setView} />;
         }
@@ -769,7 +790,9 @@ const MainApp: React.FC = () => {
                     return { title: 'Mesa de Atendimento', subtitle: `Atendendo na Mesa ${loggedInDesk.id}` };
                 }
                 return { title: 'Mesa de Atendimento', subtitle: 'Faça o login para iniciar o atendimento' };
-            case 'management': return { title: 'Gerenciamento', subtitle: 'Painel de estatísticas e usuários' };
+            case 'management': return { title: 'Gerenciamento', subtitle: 'Painel de estatísticas' };
+            case 'management_agenda': return { title: 'Agenda', subtitle: 'Gerenciamento de agendamentos' };
+            case 'management_users': return { title: 'Gerenciamento de Usuários', subtitle: 'Controle de acesso e permissões' };
             default: return null;
         }
     };

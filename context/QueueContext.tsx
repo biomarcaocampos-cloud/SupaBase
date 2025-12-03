@@ -77,6 +77,8 @@ interface QueueContextType {
   updateAgendaEntry: (updatedEntry: AgendaEntry) => Promise<void>;
   cancelAgendaEntry: (entryId: string) => void;
   refreshState: () => Promise<void>;
+  recallTicket: (deskId: number) => Promise<void>;
+  abandonTicket: (deskId: number) => Promise<void>;
 }
 
 export const QueueContext = createContext<QueueContextType | undefined>(undefined);
@@ -185,11 +187,19 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }));
 
       // Load config
-      const tipsConfig = await api.config.get('tips').catch(() => ({ config_value: JSON.stringify(defaultTips) }));
-      const tips = JSON.parse(tipsConfig.config_value);
+      // Backend returns { value: "..." } but we might be expecting config_value. Let's handle both.
+      const tipsResponse = await api.config.get('tips').catch(() => ({ value: JSON.stringify(defaultTips) }));
+      const tipsValue = tipsResponse.value || tipsResponse.config_value || JSON.stringify(defaultTips);
+      let tips;
+      try {
+        tips = JSON.parse(tipsValue);
+      } catch (e) {
+        console.warn('⚠️ Falha ao fazer parse das dicas, usando padrão:', e);
+        tips = defaultTips;
+      }
 
-      const alertConfig = await api.config.get('alert_message').catch(() => ({ config_value: '' }));
-      const alertMessage = alertConfig.config_value || null;
+      const alertResponse = await api.config.get('alert_message').catch(() => ({ value: '' }));
+      const alertMessage = alertResponse.value || alertResponse.config_value || null;
 
       setState({
         ...state,
@@ -425,14 +435,25 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const callTime = Date.now();
       const waitTime = callTime - (ticketToCall.dispenseTimestamp || callTime);
 
+      console.log('🔄 [FRONTEND] Atualizando status do ticket...');
+      console.log('   Ticket:', ticketToCall.number);
+      console.log('   Status:', 'CHAMANDO');
+      console.log('   Call Time:', new Date(callTime).toISOString());
+      console.log('   Wait Time:', waitTime);
+      console.log('   Desk ID:', deskId);
+      console.log('   Attendant:', deskBeingUsed.user?.displayName || 'Desconhecido');
+
       await api.tickets.updateStatus(ticketToCall.number, 'CHAMANDO', {
         call_time: new Date(callTime).toISOString(),
         wait_time: waitTime,
         desk_id: deskId,
         attendant_name: deskBeingUsed.user?.displayName || 'Desconhecido'
       });
+
+      console.log('✅ [FRONTEND] Status atualizado com sucesso!');
     } catch (error) {
-      console.warn('⚠️ Erro ao salvar chamada:', error);
+      console.error('❌ [FRONTEND] Erro ao salvar chamada:', error);
+      console.error('   Detalhes:', error instanceof Error ? error.message : error);
     }
 
     const newCalledHistory = [newCalledTicket, ...stateAfterFinalizing.calledHistory];
@@ -502,6 +523,17 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const startService = async (deskId: number) => {
     const startTime = Date.now();
+    const desk = state.desks.find(d => d.id === deskId);
+
+    // Atualizar status do ticket para EM_ATENDIMENTO
+    if (desk?.currentTicketInfo) {
+      try {
+        await api.tickets.updateStatus(desk.currentTicketInfo.number, 'EM_ATENDIMENTO');
+        console.log(`✅ Status do ticket ${desk.currentTicketInfo.number} atualizado para EM_ATENDIMENTO`);
+      } catch (error) {
+        console.error('❌ Erro ao atualizar status do ticket:', error);
+      }
+    }
 
     try {
       await api.desks.update(deskId, {
@@ -522,6 +554,14 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const deskToEnd = prevState.desks.find(d => d.id === deskId);
     if (!deskToEnd || !deskToEnd.currentTicketInfo || !deskToEnd.serviceStartTime) {
       return;
+    }
+
+    // Atualizar status do ticket para ATENDIDA
+    try {
+      await api.tickets.updateStatus(deskToEnd.currentTicketInfo.number, 'ATENDIDA');
+      console.log(`✅ Status do ticket ${deskToEnd.currentTicketInfo.number} atualizado para ATENDIDA`);
+    } catch (error) {
+      console.error('❌ Erro ao atualizar status do ticket:', error);
     }
 
     const stateAfterFinalizing = await finalizeCurrentTicket(deskToEnd, prevState);
@@ -559,6 +599,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const reinsertTicket = async (ticketNumber: string): Promise<ReinsertResult> => {
     const upperCaseTicketNumber = ticketNumber.toUpperCase();
+
+    console.log('🔍 [REINSERT] Procurando senha:', upperCaseTicketNumber);
+    console.log('🔍 [REINSERT] Total de senhas abandonadas no estado:', state.abandonedTickets.length);
+    console.log('🔍 [REINSERT] Senhas abandonadas:', state.abandonedTickets.map(t => t.ticketNumber));
 
     // Check if already completed
     const completedTicket = state.completedServices.find(t => t.ticketNumber.toUpperCase() === upperCaseTicketNumber);
@@ -726,6 +770,129 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const recallTicket = async (deskId: number) => {
+    const desk = state.desks.find(d => d.id === deskId);
+    if (!desk || !desk.currentTicketInfo) return;
+
+    try {
+      const now = Date.now();
+      const nowISO = new Date(now).toISOString();
+
+      // Atualizar status do ticket
+      await api.tickets.updateStatus(desk.currentTicketInfo.number, 'CHAMANDO', {
+        call_time: nowISO,
+        desk_id: deskId,
+        attendant_name: desk.user?.displayName
+      });
+
+      // Adicionar ao histórico de chamadas com novo timestamp
+      const newCalledTicket = {
+        ticketNumber: desk.currentTicketInfo.number,
+        deskNumber: deskId,
+        timestamp: now,
+        type: desk.currentTicketInfo.type,
+      };
+
+      await api.history.addCalledHistory({
+        ticket_number: newCalledTicket.ticketNumber,
+        desk_number: newCalledTicket.deskNumber,
+        ticket_type: newCalledTicket.type,
+        timestamp: newCalledTicket.timestamp,
+      });
+
+      // Atualizar estado local com novo timestamp de chamada
+      setState(prev => ({
+        ...prev,
+        calledHistory: [newCalledTicket, ...prev.calledHistory],
+        desks: prev.desks.map(d =>
+          d.id === deskId && d.currentTicketInfo
+            ? {
+              ...d,
+              currentTicketInfo: {
+                ...d.currentTicketInfo,
+                dispenseTimestamp: d.currentTicketInfo.dispenseTimestamp // Mantém o timestamp original
+              }
+            }
+            : d
+        )
+      }));
+
+      console.log(`✅ Senha ${desk.currentTicketInfo.number} rechamada - Novo timestamp: ${now}`);
+    } catch (error) {
+      console.error('Erro ao rechamar senha:', error);
+    }
+  };
+
+  const abandonTicket = async (deskId: number) => {
+    const desk = state.desks.find(d => d.id === deskId);
+    if (!desk || !desk.currentTicketInfo || !desk.user) return;
+
+    try {
+      // Buscar informações da chamada
+      const calledInfo = [...state.calledHistory]
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .find(t => t.ticketNumber === desk.currentTicketInfo?.number);
+
+      const calledTimestamp = calledInfo ? calledInfo.timestamp : Date.now();
+      const abandonedTimestamp = Date.now();
+      const waitTime = calledTimestamp - desk.currentTicketInfo.dispenseTimestamp;
+
+      // Atualizar status do ticket para ABANDONADA
+      await api.tickets.updateStatus(desk.currentTicketInfo.number, 'ABANDONADA');
+      console.log(`✅ Status do ticket ${desk.currentTicketInfo.number} atualizado para ABANDONADA`);
+
+      // Adicionar ao histórico de abandonadas
+      const newAbandonedTicket = {
+        ticketNumber: desk.currentTicketInfo.number,
+        deskId: desk.id,
+        userId: desk.user.id,
+        userName: desk.user.displayName,
+        calledTimestamp,
+        abandonedTimestamp,
+        type: desk.currentTicketInfo.type,
+        waitTime,
+        service: desk.currentTicketInfo.service,
+      };
+
+      await api.history.addAbandonedTicket({
+        ticket_number: newAbandonedTicket.ticketNumber,
+        desk_id: newAbandonedTicket.deskId,
+        user_id: newAbandonedTicket.userId,
+        user_name: newAbandonedTicket.userName,
+        called_timestamp: newAbandonedTicket.calledTimestamp,
+        abandoned_timestamp: newAbandonedTicket.abandonedTimestamp,
+        ticket_type: newAbandonedTicket.type,
+        wait_time: newAbandonedTicket.waitTime,
+        service: newAbandonedTicket.service
+      });
+
+      // Limpar mesa
+      await api.desks.update(deskId, {
+        current_ticket: null,
+        current_ticket_info: null,
+        service_start_time: null
+      });
+
+      // Atualizar estado local
+      setState(prev => ({
+        ...prev,
+        abandonedTickets: [newAbandonedTicket, ...prev.abandonedTickets],
+        desks: prev.desks.map(d =>
+          d.id === deskId
+            ? { ...d, currentTicket: null, currentTicketInfo: null, serviceStartTime: null }
+            : d
+        )
+      }));
+
+      console.log(`✅ Senha ${desk.currentTicketInfo.number} abandonada`);
+
+      // Sincronizar estado com backend para garantir que a senha apareça na lista de abandonadas
+      await refreshState();
+    } catch (error) {
+      console.error('Erro ao abandonar senha:', error);
+    }
+  };
+
   return (
     <QueueContext.Provider value={{
       state,
@@ -744,6 +911,8 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       updateAgendaEntry,
       cancelAgendaEntry,
       refreshState,
+      recallTicket,
+      abandonTicket,
     }}>
       {children}
     </QueueContext.Provider>

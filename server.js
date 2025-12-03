@@ -629,13 +629,17 @@ function startServer() {
 
     // POST abandoned tickets
     app.post('/api/abandoned-tickets', async (req, res) => {
-        const { ticket_number, service_type, desk_id, user_name, notes } = req.body;
+        const { ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    'INSERT INTO abandoned_tickets (ticket_number, service_type, desk_id, user_name, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-                    [ticket_number, service_type, desk_id, user_name, notes]
+                    `INSERT INTO abandoned_tickets 
+                (ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                RETURNING *`,
+                    [ticket_number, desk_id, user_id, user_name, called_timestamp, abandoned_timestamp, ticket_type, wait_time, service]
                 );
+                console.log(`✅ Ticket abandonado salvo: ${ticket_number}`);
                 return res.status(201).json(result.rows[0]);
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -645,7 +649,6 @@ function startServer() {
             res.status(500).json({ error: 'Erro interno.' });
         }
     });
-
     // DELETE abandoned ticket (restore)
     app.delete('/api/abandoned-tickets/:ticketNumber', async (req, res) => {
         const { ticketNumber } = req.params;

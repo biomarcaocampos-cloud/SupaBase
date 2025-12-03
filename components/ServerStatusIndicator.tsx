@@ -4,7 +4,7 @@ interface ServerStatusIndicatorProps {
   onStatusChange: (isOnline: boolean) => void;
 }
 
-const SERVER_URL = 'http://localhost:3001/api/status';
+const SERVER_URL = 'http://localhost:3002/api/status';
 
 export const ServerStatusIndicator: React.FC<ServerStatusIndicatorProps> = ({ onStatusChange }) => {
   const [status, setStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
@@ -16,10 +16,10 @@ export const ServerStatusIndicator: React.FC<ServerStatusIndicatorProps> = ({ on
         // Use AbortController for fetch timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000); // 3-second timeout
-        
-        const response = await fetch(SERVER_URL, { 
-            method: 'GET', 
-            signal: controller.signal 
+
+        const response = await fetch(SERVER_URL, {
+          method: 'GET',
+          signal: controller.signal
         });
 
         clearTimeout(timeoutId);
@@ -37,11 +37,11 @@ export const ServerStatusIndicator: React.FC<ServerStatusIndicatorProps> = ({ on
         }
       } catch (error) {
         if (status !== 'offline') {
-            setStatus('offline');
-            setServerMode(null);
-            // We set online to TRUE even if offline, to allow the "Local Mode" buttons to work.
-            // The queue context now handles local generation.
-            onStatusChange(true); 
+          setStatus('offline');
+          setServerMode(null);
+          // We set online to TRUE even if offline, to allow the "Local Mode" buttons to work.
+          // The queue context now handles local generation.
+          onStatusChange(true);
         }
       }
     };
@@ -53,13 +53,13 @@ export const ServerStatusIndicator: React.FC<ServerStatusIndicatorProps> = ({ on
   }, [onStatusChange, status]);
 
   const getStatusInfo = () => {
-      switch(status) {
-          case 'connecting': return { color: 'bg-yellow-500', text: 'Conectando...' };
-          case 'online': return { color: 'bg-green-500', text: serverMode === 'database' ? 'Servidor Conectado (Banco)' : 'Servidor Online (Memória)' };
-          case 'offline': return { color: 'bg-orange-500', text: 'Modo Local (Servidor Offline)' };
-      }
+    switch (status) {
+      case 'connecting': return { color: 'bg-yellow-500', text: 'Conectando...' };
+      case 'online': return { color: 'bg-green-500', text: serverMode === 'database' ? 'Servidor Conectado (Banco)' : 'Servidor Online (Memória)' };
+      case 'offline': return { color: 'bg-orange-500', text: 'Modo Local (Servidor Offline)' };
+    }
   };
-  
+
   const info = getStatusInfo();
   const pulseClass = status === 'connecting' ? 'animate-pulse' : '';
 

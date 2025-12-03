@@ -27,39 +27,39 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ title, subtitle, user, onLogout, onHomeClick }) => {
-  return (
-    <header className="bg-gray-900">
-      <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
-        <div className="text-left">
-            <h1 className="text-2xl font-bold leading-tight text-white">
-            {title}
-            </h1>
-            <p className="text-md text-gray-300 mt-1">{subtitle}</p>
-        </div>
+    return (
+        <header className="bg-gray-900">
+            <div className="w-full py-4 px-6 lg:px-10 flex justify-between items-center">
+                <div className="text-left">
+                    <h1 className="text-2xl font-bold leading-tight text-white">
+                        {title}
+                    </h1>
+                    <p className="text-md text-gray-300 mt-1">{subtitle}</p>
+                </div>
 
-        <div className="flex items-center gap-4">
-            {onHomeClick && (
-                <button onClick={onHomeClick} className="text-red-500 p-2 rounded-full hover:bg-gray-700 hover:text-red-400 transition-colors" title="Voltar à Tela Principal">
-                    <HomeIcon />
-                </button>
-            )}
-            {user && onLogout && (
-                <>
-                    <div className="text-right">
-                        <p className="font-semibold text-white">{user.displayName}</p>
-                        <button onClick={onLogout} className="text-sm text-red-400 hover:underline">Sair</button>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center">
-                        {user.profilePicture ? (
-                            <img src={user.profilePicture} alt="Foto do perfil" className="h-full w-full object-cover" />
-                        ) : (
-                            <UserIcon />
-                        )}
-                    </div>
-                </>
-            )}
-        </div>
-      </div>
-    </header>
-  );
+                <div className="flex items-center gap-6">
+                    {onHomeClick && (
+                        <button onClick={onHomeClick} className="text-red-500 p-2 rounded-full hover:bg-gray-800 hover:text-red-400 transition-colors" title="Voltar à Tela Principal">
+                            <HomeIcon />
+                        </button>
+                    )}
+                    {user && onLogout && (
+                        <div className="flex items-center gap-4 pl-6 border-l border-gray-700">
+                            <div className="text-right hidden sm:block">
+                                <p className="font-semibold text-white text-lg">{user.displayName}</p>
+                                <button onClick={onLogout} className="text-sm text-red-400 hover:text-red-300 font-medium hover:underline">Sair</button>
+                            </div>
+                            <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center border-2 border-gray-600">
+                                {user.profilePicture ? (
+                                    <img src={user.profilePicture} alt="Foto do perfil" className="h-full w-full object-cover" />
+                                ) : (
+                                    <UserIcon />
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </header>
+    );
 };
