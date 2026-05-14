@@ -4,7 +4,8 @@ interface ServerStatusIndicatorProps {
   onStatusChange: (isOnline: boolean) => void;
 }
 
-const SERVER_URL = 'http://localhost:3002/api/status';
+const SERVER_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/status`;
+
 
 export const ServerStatusIndicator: React.FC<ServerStatusIndicatorProps> = ({ onStatusChange }) => {
   const [status, setStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');

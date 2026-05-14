@@ -1,5 +1,7 @@
 // API Service - Centralized API calls to backend
-const API_BASE_URL = 'http://localhost:3002';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
+const SERVER_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/status`;
+
 
 // ============================================
 // HELPER FUNCTIONS
