@@ -85,6 +85,8 @@ export const QueueContext = createContext<QueueContextType | undefined>(undefine
 
 export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<QueueState>(initialState);
+  // Ref to prevent the polling refresh from overwriting an in-progress call action
+  const isCallingTicketRef = React.useRef(false);
 
   // Load initial state from backend
   const refreshState = useCallback(async () => {
@@ -216,16 +218,17 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         agenda = (agendaResponse.agenda || []).map((a: any) => ({
           id: a.id,
           ticketNumber: a.ticket_number,
-          nomeCompleto: a.nome_completo,
+          nome: a.nome_completo,
           cpf: a.cpf,
           telefone: a.telefone,
+          whatsapp_mesmo: true,
           email: a.email,
-          dataAgendamento: a.data_agendamento,
-          horario: a.horario,
-          servico: a.servico,
-          observacoes: a.observacoes,
-          documentosNecessarios: a.documentos_necessarios || [],
-          data_do_registro: a.data_do_registro,
+          data_retorno: new Date(Number(a.data_agendamento)).toISOString().split('T')[0],
+          hora_retorno: a.horario,
+          local_retorno: a.servico as any,
+          resumo: a.observacoes,
+          documentos_selecionados: a.documentos_necessarios || [],
+          data_do_registro: Number(a.data_do_registro),
           status: a.status,
         }));
       } catch (error) {
@@ -247,17 +250,36 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const alertResponse = await api.config.get('alert_message').catch(() => ({ value: '' }));
       const alertMessage = alertResponse.value || alertResponse.config_value || null;
 
-      setState({
-        ...state,
-        waitingNormal,
-        waitingPreferential,
-        desks,
-        calledHistory,
-        completedServices,
-        abandonedTickets,
-        agenda,
-        tips,
-        alertMessage,
+      setState(prevState => {
+        // Merge: preserve currentTicketInfo / serviceStartTime from local state
+        // so that the polling does NOT wipe out an active call that was just made.
+        const mergedDesks = desks.map(refreshedDesk => {
+          const localDesk = prevState.desks.find(d => d.id === refreshedDesk.id);
+          if (!localDesk) return refreshedDesk;
+
+          // If local state has an active ticket but backend hasn't caught up yet, keep local data
+          const localHasTicket = !!localDesk.currentTicketInfo;
+          const backendHasTicket = !!refreshedDesk.currentTicketInfo;
+
+          if (localHasTicket && !backendHasTicket) {
+            // Backend hasn't persisted yet – preserve local desk state
+            return localDesk;
+          }
+          return refreshedDesk;
+        });
+
+        return {
+          ...prevState,
+          waitingNormal,
+          waitingPreferential,
+          desks: mergedDesks,
+          calledHistory,
+          completedServices,
+          abandonedTickets,
+          agenda,
+          tips,
+          alertMessage,
+        };
       });
 
       console.log('✅ [REFRESH] Estado atualizado com sucesso!');
@@ -280,7 +302,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Auto-refresh every 5 seconds to stay in sync with database
   useEffect(() => {
     const interval = setInterval(() => {
-      refreshState();
+      // Skip refresh if a call action is currently in progress to avoid race conditions
+      if (!isCallingTicketRef.current) {
+        refreshState();
+      }
     }, 5000); // 5 seconds
 
     return () => clearInterval(interval);
@@ -405,11 +430,15 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const callSpecificTicket = async (deskId: number, type: 'NORMAL' | 'PREFERENCIAL') => {
+    // Block polling refresh while this async action runs
+    isCallingTicketRef.current = true;
+
     // Get current state snapshot
     const prevState = state;
     const deskBeingUsed = prevState.desks.find(d => d.id === deskId);
 
     if (!deskBeingUsed || !deskBeingUsed.user || deskBeingUsed.services.length === 0) {
+      isCallingTicketRef.current = false;
       return;
     }
 
@@ -455,6 +484,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         ...stateAfterFinalizing,
         desks: newDesks,
       });
+      isCallingTicketRef.current = false;
       return;
     }
 
@@ -530,6 +560,11 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       calledHistory: newCalledHistory,
       desks: newDesks,
     });
+
+    // Allow polling to resume after a short delay (so the backend has time to persist)
+    setTimeout(() => {
+      isCallingTicketRef.current = false;
+    }, 3000);
   };
 
   const login = async (deskId: number, user: { id: string; displayName: string }, services: ServiceType[]) => {
@@ -763,18 +798,19 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
 
     try {
+      // Fix field mapping to match both apiService.ts and the database schema
       await api.agenda.create({
         id: newEntry.id,
         ticket_number: newEntry.ticketNumber,
-        nome_completo: newEntry.nomeCompleto,
+        nome_completo: newEntry.nome,
         cpf: newEntry.cpf,
         telefone: newEntry.telefone,
         email: newEntry.email,
-        data_agendamento: newEntry.dataAgendamento,
-        horario: newEntry.horario,
-        servico: newEntry.servico,
-        observacoes: newEntry.observacoes,
-        documentos_necessarios: newEntry.documentosNecessarios,
+        data_agendamento: new Date(newEntry.data_retorno + 'T00:00:00').getTime(),
+        horario: newEntry.hora_retorno,
+        servico: newEntry.local_retorno, 
+        observacoes: newEntry.resumo,
+        documentos_necessarios: newEntry.documentos_selecionados,
         data_do_registro: newEntry.data_do_registro,
       });
 
@@ -791,15 +827,15 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateAgendaEntry = async (updatedEntry: AgendaEntry): Promise<void> => {
     try {
       await api.agenda.update(updatedEntry.id, {
-        nome_completo: updatedEntry.nomeCompleto,
+        nome_completo: updatedEntry.nome,
         cpf: updatedEntry.cpf,
         telefone: updatedEntry.telefone,
         email: updatedEntry.email,
-        data_agendamento: updatedEntry.dataAgendamento,
-        horario: updatedEntry.horario,
-        servico: updatedEntry.servico,
-        observacoes: updatedEntry.observacoes,
-        documentos_necessarios: updatedEntry.documentosNecessarios,
+        data_agendamento: new Date(updatedEntry.data_retorno + 'T00:00:00').getTime(),
+        horario: updatedEntry.hora_retorno,
+        servico: updatedEntry.local_retorno,
+        observacoes: updatedEntry.resumo,
+        documentos_necessarios: updatedEntry.documentos_selecionados,
         status: updatedEntry.status,
       });
 

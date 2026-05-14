@@ -20,8 +20,14 @@ export const ServiceDesk: React.FC = () => {
   const [view, setView] = useState<'return' | 'select_desk'>('return');
 
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [waitingSinceCall, setWaitingSinceCall] = useState(0);
   const [isAgendaModalOpen, setIsAgendaModalOpen] = useState(false);
+
+  // Countdown / auto-recall state
+  const WAIT_SECONDS = 15;
+  const MAX_CALLS = 3;
+  const [callCount, setCallCount] = useState(1);
+  const [countdown, setCountdown] = useState(WAIT_SECONDS);
+  const [isAutoRecalling, setIsAutoRecalling] = useState(false);
 
   const loggedInDesk = state.desks.find(d => d.user?.id === currentUser?.id);
   const isServiceActive = loggedInDesk?.serviceStartTime !== null;
@@ -51,32 +57,45 @@ export const ServiceDesk: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [isServiceActive, loggedInDesk?.serviceStartTime]);
 
+  // Reset countdown and callCount whenever a NEW ticket is shown on the desk
+  const currentTicketNumber = loggedInDesk?.currentTicketInfo?.number;
   useEffect(() => {
-    let intervalId: number | undefined;
+    if (currentTicketNumber && !loggedInDesk?.serviceStartTime) {
+      setCountdown(WAIT_SECONDS);
+      // callCount is managed externally (recall/abandon), only reset on NEW ticket
+    } else if (!currentTicketNumber) {
+      setCallCount(1);
+      setCountdown(WAIT_SECONDS);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTicketNumber]);
 
-    if (loggedInDesk?.currentTicketInfo && !loggedInDesk.serviceStartTime) {
-      const calledInfo = state.calledHistory.find(
-        t => t.ticketNumber === loggedInDesk.currentTicketInfo?.number
-      );
-      // Sempre usa o timestamp mais recente da chamada
-      const calledTimestamp = calledInfo ? calledInfo.timestamp : Date.now();
+  // Countdown tick + auto-recall / auto-abandon
+  useEffect(() => {
+    if (!loggedInDesk?.currentTicketInfo || loggedInDesk.serviceStartTime || isAutoRecalling) return;
 
-      const updateTimer = () => {
-        setWaitingSinceCall(Date.now() - calledTimestamp);
-      };
-
-      intervalId = window.setInterval(updateTimer, 1000);
-      updateTimer();
-    } else {
-      setWaitingSinceCall(0);
+    if (countdown <= 0) {
+      // Time's up
+      setIsAutoRecalling(true);
+      if (callCount >= MAX_CALLS) {
+        // Mark as no-show
+        if (loggedInDesk) abandonTicket(loggedInDesk.id).finally(() => setIsAutoRecalling(false));
+      } else {
+        // Auto-recall
+        if (loggedInDesk) {
+          recallTicket(loggedInDesk.id).finally(() => {
+            setCallCount(prev => prev + 1);
+            setCountdown(WAIT_SECONDS);
+            setIsAutoRecalling(false);
+          });
+        }
+      }
+      return;
     }
 
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [loggedInDesk?.currentTicketInfo, loggedInDesk?.serviceStartTime, state.calledHistory]);
+    const id = window.setTimeout(() => setCountdown(prev => prev - 1), 1000);
+    return () => clearTimeout(id);
+  }, [countdown, loggedInDesk, isAutoRecalling, callCount, recallTicket, abandonTicket]);
 
   useEffect(() => {
     if (myActiveDesk) {
@@ -162,16 +181,24 @@ export const ServiceDesk: React.FC = () => {
   };
 
   const handleRecall = async () => {
-    if (loggedInDesk) {
-      // Reinicia o cronômetro ao chamar novamente
-      setWaitingSinceCall(0);
+    if (!loggedInDesk) return;
+    if (callCount >= MAX_CALLS) {
+      // Already at limit — treat as no-show
+      await abandonTicket(loggedInDesk.id);
+      setCallCount(1);
+      setCountdown(WAIT_SECONDS);
+    } else {
       await recallTicket(loggedInDesk.id);
+      setCallCount(prev => prev + 1);
+      setCountdown(WAIT_SECONDS);
     }
   };
 
   const handleCallNext = async () => {
     if (loggedInDesk) {
       await abandonTicket(loggedInDesk.id);
+      setCallCount(1);
+      setCountdown(WAIT_SECONDS);
     }
   };
 
@@ -218,16 +245,37 @@ export const ServiceDesk: React.FC = () => {
                     Serviço: {ServiceTypeDetails[loggedInDesk.currentTicketInfo.service].title}
                   </p>
                 )}
-                {loggedInDesk.currentTicketInfo && !isServiceActive && waitingSinceCall > 0 && (
-                  <div className="flex items-center justify-center gap-2 text-yellow-400 text-lg font-medium bg-gray-700 px-3 py-1 rounded-full w-auto mx-auto mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                    <span>Espera:</span>
-                    <span className="font-mono">{formatTime(waitingSinceCall)}</span>
+                {loggedInDesk.currentTicketInfo && !isServiceActive && (
+                  <div className="flex flex-col items-center gap-2 mb-4">
+                    {/* Countdown ring */}
+                    <div className={`relative flex items-center justify-center w-24 h-24 rounded-full border-4 ${
+                      countdown <= 5 ? 'border-red-500' : countdown <= 10 ? 'border-yellow-400' : 'border-gray-500'
+                    } transition-colors duration-500`}>
+                      <div className="text-center">
+                        <span className={`text-3xl font-mono font-bold ${
+                          countdown <= 5 ? 'text-red-400' : countdown <= 10 ? 'text-yellow-300' : 'text-gray-200'
+                        }`}>{countdown}</span>
+                        <p className="text-xs text-gray-400 leading-none">seg</p>
+                      </div>
+                    </div>
+                    {/* Call attempt dots */}
+                    <div className="flex items-center gap-2">
+                      {Array.from({ length: MAX_CALLS }).map((_, i) => (
+                        <div
+                          key={i}
+                          className={`w-3 h-3 rounded-full transition-colors duration-300 ${
+                            i < callCount ? 'bg-yellow-400' : 'bg-gray-600'
+                          }`}
+                          title={`Chamada ${i + 1}`}
+                        />
+                      ))}
+                      <span className="text-xs text-gray-400 ml-1">chamada {callCount}/{MAX_CALLS}</span>
+                    </div>
                   </div>
                 )}
                 {isServiceActive && (
-                  <div className="flex items-center justify-center gap-2 text-white text-xl font-medium bg-gray-700 px-3 py-1 rounded-full w-auto mx-auto">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  <div className="flex items-center justify-center gap-2 text-white text-xl font-medium bg-gray-700 px-3 py-1 rounded-full w-auto mx-auto mb-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                     <span>Duração:</span>
                     <span className="font-mono">{formatTime(elapsedTime)}</span>
                   </div>
@@ -246,9 +294,13 @@ export const ServiceDesk: React.FC = () => {
                         Iniciar Atendimento
                       </button>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <button onClick={handleRecall} className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300 flex items-center justify-center gap-2">
+                        <button
+                          onClick={handleRecall}
+                          disabled={isAutoRecalling}
+                          className="bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300 flex items-center justify-center gap-2"
+                        >
                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
-                          Chamar Novamente
+                          {callCount >= MAX_CALLS ? 'Não Compareceu' : `Chamar Novamente (${callCount}/${MAX_CALLS})`}
                         </button>
                         <button onClick={handleCallNext} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition-colors duration-300 flex items-center justify-center gap-2">
                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0"><path d="m9 18 6-6-6-6" /></svg>

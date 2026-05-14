@@ -227,9 +227,9 @@ export const UserManagement: React.FC = () => {
     };
 
     const filteredUsers = users.filter(u => 
-        u.fullName.toLowerCase().includes(filter.toLowerCase()) || 
-        u.cpf.includes(filter)
-    ).sort((a, b) => a.fullName.localeCompare(b.fullName));
+        (u.fullName || '').toLowerCase().includes(filter.toLowerCase()) || 
+        (u.cpf || '').includes(filter)
+    ).sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
 
     return (
         <div className="bg-gray-900 text-white p-6 rounded-xl">

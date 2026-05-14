@@ -57,7 +57,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onSwitchToRegister, su
   return (
     <div className="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-xl shadow-lg">
       <div className="text-center">
-        <h2 className="text-3xl font-extrabold text-white">Acessar Sistema</h2>
+        <h2 className="text-3xl font-extrabold text-white">Sistema Integrado de Atendimento</h2>
         <p className="mt-2 text-gray-400">Juizado Especial Cível de Guarulhos</p>
       </div>
       {successMessage && (

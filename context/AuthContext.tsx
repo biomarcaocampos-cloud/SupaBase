@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { User, ActivityLog } from '../types';
 import { validateCPF } from '../utils/cpfValidator';
 import api from '../services/apiService';
@@ -17,6 +17,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [users, setUsers] = useState<User[]>([]);
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+
+    const fetchUsers = useCallback(async () => {
+        try {
+            const response = await api.users.getAll();
+            const backendUsers = response.users || [];
+            
+            const mappedUsers: User[] = backendUsers.map((u: any) => ({
+                id: u.id.toString(),
+                cpf: u.cpf || '',
+                fullName: u.full_name,
+                passwordHash: '',
+                role: u.role === 'admin' ? 'MANAGER' : 'ATTENDANT',
+                isActive: u.status === 'ATIVO',
+                profilePicture: u.profile_picture,
+                createdAt: new Date(u.created_at).getTime(),
+                history: {
+                    statusChanges: [],
+                    passwordResets: [],
+                },
+            }));
+            
+            setUsers(mappedUsers);
+        } catch (error) {
+            console.error('Erro ao carregar usuários:', error);
+        }
+    }, []);
 
     // Load users from backend and restore session
     useEffect(() => {
@@ -53,11 +79,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
 
+            // Always fetch all users if the logged in user is a manager (or just fetch anyway for the dispenser)
+            await fetchUsers();
+
             setIsLoading(false);
         };
 
         initAuth();
-    }, []);
+    }, [fetchUsers]);
 
     const login = async (cpf: string, password: string): Promise<void> => {
         try {
@@ -166,6 +195,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
 
             console.log('✅ Usuário criado com sucesso');
+            await fetchUsers();
         } catch (error) {
             console.error('❌ Erro ao criar usuário:', error);
             throw error;
@@ -206,6 +236,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             console.log('✅ Usuário atualizado com sucesso');
+            await fetchUsers();
         } catch (error) {
             console.error('❌ Erro ao atualizar usuário:', error);
             throw error;
@@ -235,6 +266,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await api.users.update(userId, { status: newStatus });
 
             console.log('✅ Status do usuário alterado');
+            await fetchUsers();
         } catch (error) {
             console.error('❌ Erro ao alterar status:', error);
             throw error;
@@ -264,6 +296,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             await api.users.update(userId, { password: newPassword });
 
             console.log('✅ Senha resetada para o CPF do usuário');
+            await fetchUsers();
         } catch (error) {
             console.error('❌ Erro ao resetar senha:', error);
             throw error;

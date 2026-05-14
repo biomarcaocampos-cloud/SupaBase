@@ -290,32 +290,58 @@ const AgendaManagement: React.FC = () => {
 
     const [startDate, setStartDate] = useState(todayStr);
     const [endDate, setEndDate] = useState(todayStr);
+    const [searchDateType, setSearchDateType] = useState<'registro' | 'retorno'>('registro');
     const [nameFilter, setNameFilter] = useState('');
     const [cpfFilter, setCpfFilter] = useState('');
     const [editingEntry, setEditingEntry] = useState<AgendaEntry | null>(null);
     const [isAgendaModalOpen, setIsAgendaModalOpen] = useState(false);
+    const [filterMode, setFilterMode] = useState<'normal' | 'pending' | 'cancelled'>('normal');
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 30;
 
-    const filteredAgenda = useMemo(() => {
-        const hasTextFilter = nameFilter.trim() !== '' || cpfFilter.trim() !== '';
-
-        if (hasTextFilter) {
-            return agenda.filter(entry => {
+    const displayAgenda = useMemo(() => {
+        let base = [];
+        if (filterMode === 'pending') {
+            base = agenda.filter(a => a.status === 'AGENDADO');
+        } else if (filterMode === 'cancelled') {
+            base = agenda.filter(a => a.status === 'CANCELADO');
+        } else {
+            base = agenda.filter(entry => {
+                const entryDateStr = searchDateType === 'retorno' 
+                    ? entry.data_retorno 
+                    : new Date(entry.data_do_registro).toISOString().split('T')[0];
+                
                 const isNameMatch = nameFilter.trim() === '' || entry.nome.toLowerCase().includes(nameFilter.toLowerCase());
                 const cleanCpfFilter = cpfFilter.replace(/\D/g, '');
                 const isCpfMatch = cleanCpfFilter === '' || (entry.cpf && entry.cpf.replace(/\D/g, '').includes(cleanCpfFilter));
-                return isNameMatch && isCpfMatch;
-            }).sort((a, b) => b.data_do_registro - a.data_do_registro);
-        }
+                const isDateMatch = (startDate === '' && endDate === '') || (entryDateStr >= startDate && entryDateStr <= endDate);
 
-        return agenda.filter(entry => {
-            const entryDate = new Date(entry.data_retorno + 'T00:00:00');
-            const start = new Date(startDate + 'T00:00:00');
-            const end = new Date(endDate + 'T23:59:59');
-            return entryDate >= start && entryDate <= end;
-        }).sort((a, b) => new Date(a.data_retorno).getTime() - new Date(b.data_retorno).getTime() || a.hora_retorno.localeCompare(b.hora_retorno));
-    }, [agenda, startDate, endDate, nameFilter, cpfFilter]);
+                return isNameMatch && isCpfMatch && isDateMatch;
+            });
+        }
+        
+        return base.sort((a, b) => {
+            if (filterMode === 'normal') {
+                return new Date(a.data_retorno).getTime() - new Date(b.data_retorno).getTime() || a.hora_retorno.localeCompare(b.hora_retorno);
+            }
+            return b.data_do_registro - a.data_do_registro;
+        });
+    }, [agenda, filterMode, startDate, endDate, searchDateType, nameFilter, cpfFilter]);
+
+    const totalPages = Math.ceil(displayAgenda.length / itemsPerPage);
+    const paginatedAgenda = displayAgenda.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+    // Reset to page 1 when filter changes
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [filterMode, startDate, endDate, nameFilter, cpfFilter]);
 
     const totalPending = agenda.filter(a => a.status === 'AGENDADO').length;
+    const totalCancelled = agenda.filter(a => a.status === 'CANCELADO').length;
+    const periodCount = agenda.filter(entry => {
+        const entryDateStr = searchDateType === 'retorno' ? entry.data_retorno : new Date(entry.data_do_registro).toISOString().split('T')[0];
+        return (startDate === '' && endDate === '') || (entryDateStr >= startDate && entryDateStr <= endDate);
+    }).length;
 
     const handleCancelEntry = (entryId: string) => {
         if (window.confirm("Tem certeza que deseja desativar este agendamento por desistência?")) {
@@ -332,10 +358,14 @@ const AgendaManagement: React.FC = () => {
         }
     };
 
-    const StatCard: React.FC<{ title: string; value: string; }> = ({ title, value }) => (
-        <div className="bg-gray-800 p-4 rounded-xl shadow">
-            <p className="text-gray-400 text-sm uppercase font-semibold">{title}</p>
-            <p className="text-white text-3xl font-bold">{value}</p>
+    const StatCard: React.FC<{ title: string; value: string; active: boolean; onClick: () => void; color: string; }> = ({ title, value, active, onClick, color }) => (
+        <div 
+            onClick={onClick}
+            className={`cursor-pointer p-4 rounded-xl shadow transition-all duration-200 transform ${active ? `ring-2 ${color} bg-gray-700 scale-105` : 'bg-gray-800 hover:bg-gray-750'}`}
+        >
+            <p className={`text-sm uppercase font-bold mb-1 ${active ? 'text-white' : 'text-gray-400'}`}>{title}</p>
+            <p className="text-white text-3xl font-black">{value}</p>
+            {active && <div className="mt-2 text-xs font-bold text-blue-400">FILTRO ATIVO</div>}
         </div>
     );
 
@@ -347,15 +377,50 @@ const AgendaManagement: React.FC = () => {
                     Novo Agendamento
                 </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bg-gray-800 p-4 rounded-lg">
-                <div><label className="text-sm font-semibold text-gray-400">Data Inicial</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
-                <div><label className="text-sm font-semibold text-gray-400">Data Final</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
-                <div><label className="text-sm font-semibold text-gray-400">Pesquisar por Nome</label><input type="text" value={nameFilter} onChange={e => setNameFilter(e.target.value)} placeholder="Busca global por nome..." className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
-                <div><label className="text-sm font-semibold text-gray-400">Pesquisar por CPF</label><input type="text" value={cpfFilter} onChange={e => setCpfFilter(e.target.value)} placeholder="Busca global por CPF..." className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6 bg-gray-800 p-4 rounded-lg items-end">
+                <div>
+                    <label className="text-sm font-semibold text-gray-400 block mb-1">Data Inicial</label>
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md border border-gray-600" />
+                </div>
+                <div>
+                    <label className="text-sm font-semibold text-gray-400 block mb-1">Data Final</label>
+                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-gray-700 text-white p-2 rounded-md border border-gray-600" />
+                </div>
+                <div className="flex flex-col justify-center h-full gap-2 px-2">
+                    <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                        <input type="radio" name="searchDateType" value="registro" checked={searchDateType === 'registro'} onChange={() => setSearchDateType('registro')} className="text-red-500 focus:ring-red-500" />
+                        Por Registro
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+                        <input type="radio" name="searchDateType" value="retorno" checked={searchDateType === 'retorno'} onChange={() => setSearchDateType('retorno')} className="text-red-500 focus:ring-red-500" />
+                        Por Retorno
+                    </label>
+                </div>
+                <div><label className="text-sm font-semibold text-gray-400">Pesquisar por Nome</label><input type="text" value={nameFilter} onChange={e => setNameFilter(e.target.value)} placeholder="Busca por nome..." className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
+                <div><label className="text-sm font-semibold text-gray-400">Pesquisar por CPF</label><input type="text" value={cpfFilter} onChange={e => setCpfFilter(e.target.value)} placeholder="Busca por CPF..." className="w-full mt-1 bg-gray-700 text-white p-2 rounded-md border border-gray-600" /></div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
-                <StatCard title="Total de Agendamentos Pendentes" value={String(totalPending)} />
-                <StatCard title="Agendamentos no Período/Busca" value={String(filteredAgenda.length)} />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6">
+                <StatCard 
+                    title="Agendamentos no Período" 
+                    value={String(periodCount)} 
+                    active={filterMode === 'normal'}
+                    onClick={() => setFilterMode('normal')}
+                    color="ring-blue-500"
+                />
+                <StatCard 
+                    title="Total Pendentes" 
+                    value={String(totalPending)} 
+                    active={filterMode === 'pending'}
+                    onClick={() => setFilterMode('pending')}
+                    color="ring-yellow-500"
+                />
+                <StatCard 
+                    title="Total Cancelados" 
+                    value={String(totalCancelled)} 
+                    active={filterMode === 'cancelled'}
+                    onClick={() => setFilterMode('cancelled')}
+                    color="ring-red-500"
+                />
             </div>
             <div className="overflow-x-auto bg-gray-800 rounded-lg">
                 <table className="w-full text-left min-w-[840px]">
@@ -371,32 +436,62 @@ const AgendaManagement: React.FC = () => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-700">
-                        {filteredAgenda.map(entry => (
-                            <tr key={entry.id} className="hover:bg-gray-700">
-                                <td className="p-3 font-semibold text-white">{entry.nome}</td>
-                                <td className="p-3 font-mono text-gray-300">{entry.cpf || 'N/A'}</td>
-                                <td className="p-3 text-gray-300">{new Date(entry.data_retorno + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
-                                <td className="p-3 font-mono text-gray-300">{entry.hora_retorno}</td>
-                                <td className="p-3 text-gray-300">{entry.local_retorno}</td>
-                                <td className="p-3">{getStatusBadge(entry.status)}</td>
-                                <td className="p-3 text-center">
-                                    {entry.status === 'AGENDADO' && (
-                                        <div className="flex justify-center items-center gap-4">
-                                            <button onClick={() => setEditingEntry(entry)} title="Editar Agendamento" className="text-blue-400 hover:text-blue-300">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
-                                            </button>
-                                            <button onClick={() => handleCancelEntry(entry.id)} title="Desativar Agendamento (Desistência)" className="text-red-500 hover:text-red-400">
+                        {paginatedAgenda.map(entry => (
+                            <tr key={entry.id} className="hover:bg-gray-750 transition-colors duration-150">
+                                <td className="p-3 font-bold text-white border-b border-gray-750">{entry.nome}</td>
+                                <td className="p-3 font-mono text-gray-300 border-b border-gray-750">{entry.cpf || 'N/A'}</td>
+                                <td className="p-3 text-gray-300 border-b border-gray-750">{new Date(entry.data_retorno + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
+                                <td className="p-3 font-mono text-gray-300 border-b border-gray-750">{entry.hora_retorno}</td>
+                                <td className="p-3 text-gray-300 border-b border-gray-750">{entry.local_retorno}</td>
+                                <td className="p-3 border-b border-gray-750">{getStatusBadge(entry.status)}</td>
+                                <td className="p-3 text-center border-b border-gray-750">
+                                    <div className="flex justify-center items-center gap-3">
+                                        <button onClick={() => setEditingEntry(entry)} title="Editar Agendamento" className="text-blue-400 hover:text-blue-300 p-1 hover:bg-gray-600 rounded">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
+                                        </button>
+                                        {entry.status === 'AGENDADO' && (
+                                            <button onClick={() => handleCancelEntry(entry.id)} title="Cancelar Agendamento" className="text-red-500 hover:text-red-400 p-1 hover:bg-gray-600 rounded">
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
                                             </button>
-                                        </div>
-                                    )}
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
-                {filteredAgenda.length === 0 && <p className="text-center text-gray-400 py-8">Nenhum agendamento encontrado para os filtros selecionados.</p>}
+                {paginatedAgenda.length === 0 && (
+                    <div className="text-center text-gray-400 py-12 bg-gray-800 border-t border-gray-700">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.172 9.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <p className="text-lg">Nenhum agendamento encontrado.</p>
+                    </div>
+                )}
             </div>
+
+            {totalPages > 1 && (
+                <div className="mt-6 flex justify-between items-center bg-gray-800 p-4 rounded-lg">
+                    <p className="text-sm text-gray-400">Exibindo <span className="font-bold text-white">{(currentPage - 1) * itemsPerPage + 1}</span> a <span className="font-bold text-white">{Math.min(currentPage * itemsPerPage, displayAgenda.length)}</span> de <span className="font-bold text-white">{displayAgenda.length}</span> resultados</p>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                            disabled={currentPage === 1}
+                            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                        >
+                            Anterior
+                        </button>
+                        <div className="flex items-center px-4 bg-gray-900 rounded font-mono">
+                            {currentPage} / {totalPages}
+                        </div>
+                        <button 
+                            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                            disabled={currentPage === totalPages}
+                            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                        >
+                            Próxima
+                        </button>
+                    </div>
+                </div>
+            )}
             {editingEntry && <EditAgendaModal entry={editingEntry} onClose={() => setEditingEntry(null)} onSave={updateAgendaEntry} />}
             {isAgendaModalOpen && currentUser && (
                 <AgendaModal

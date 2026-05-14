@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 const UserIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-16 w-16 text-gray-500">
@@ -15,6 +15,10 @@ interface ProfilePictureInputProps {
 export const ProfilePictureInput: React.FC<ProfilePictureInputProps> = ({ onPictureChange, initialImage }) => {
   const [imagePreview, setImagePreview] = useState<string | null>(initialImage || null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setImagePreview(initialImage || null);
+  }, [initialImage]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

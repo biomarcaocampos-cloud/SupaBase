@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ProfileEditModal } from './auth/ProfileEditModal';
 
 const UserIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-full w-full">
@@ -27,6 +28,8 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ title, subtitle, user, onLogout, onHomeClick }) => {
+    const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
     return (
         <header className="bg-gray-900">
             <div className="w-full py-4 px-6 lg:px-10 flex justify-between items-center">
@@ -46,10 +49,16 @@ export const Header: React.FC<HeaderProps> = ({ title, subtitle, user, onLogout,
                     {user && onLogout && (
                         <div className="flex items-center gap-4 pl-6 border-l border-gray-700">
                             <div className="text-right hidden sm:block">
-                                <p className="font-semibold text-white text-lg">{user.displayName}</p>
-                                <button onClick={onLogout} className="text-sm text-red-400 hover:text-red-300 font-medium hover:underline">Sair</button>
+                                <p className="font-semibold text-white text-lg cursor-pointer hover:underline" onClick={() => setIsProfileModalOpen(true)}>
+                                    {user.displayName}
+                                </p>
+                                <div className="flex justify-end gap-2 mt-1">
+                                    <button onClick={() => setIsProfileModalOpen(true)} className="text-xs text-blue-400 hover:underline">Editar Perfil</button>
+                                    <span className="text-xs text-gray-600">|</span>
+                                    <button onClick={onLogout} className="text-xs text-red-400 font-medium hover:underline">Sair</button>
+                                </div>
                             </div>
-                            <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center border-2 border-gray-600">
+                            <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center border-2 border-transparent hover:border-gray-500 cursor-pointer transition-all" onClick={() => setIsProfileModalOpen(true)}>
                                 {user.profilePicture ? (
                                     <img src={user.profilePicture} alt="Foto do perfil" className="h-full w-full object-cover" />
                                 ) : (
@@ -60,6 +69,10 @@ export const Header: React.FC<HeaderProps> = ({ title, subtitle, user, onLogout,
                     )}
                 </div>
             </div>
+            
+            {isProfileModalOpen && (
+                <ProfileEditModal onClose={() => setIsProfileModalOpen(false)} />
+            )}
         </header>
     );
 };

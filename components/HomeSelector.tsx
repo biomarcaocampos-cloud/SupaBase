@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQueue } from '../hooks/useQueue';
 import { useAuth } from '../hooks/useAuth';
+import { ProfileEditModal } from './auth/ProfileEditModal';
 
 interface HomeSelectorProps {
   setView: (view: 'display' | 'dispenser' | 'desk' | 'management' | 'management_agenda' | 'management_users') => void;
@@ -75,6 +76,7 @@ const getDisplayName = (fullName: string): string => {
 export const HomeSelector: React.FC<HomeSelectorProps> = ({ setView }) => {
   const { resetSystem } = useQueue();
   const { currentUser, logout } = useAuth();
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const isManager = currentUser?.role === 'MANAGER';
 
@@ -83,10 +85,16 @@ export const HomeSelector: React.FC<HomeSelectorProps> = ({ setView }) => {
       {currentUser && logout && (
         <div className="absolute top-4 right-4 sm:top-8 sm:right-8 flex items-center gap-4 z-10">
           <div className="text-right">
-            <p className="font-semibold text-white">{getDisplayName(currentUser.fullName)}</p>
-            <button onClick={logout} className="text-sm text-red-400 hover:underline">Sair</button>
+            <p className="font-semibold text-white cursor-pointer hover:underline" onClick={() => setIsProfileModalOpen(true)}>
+              {getDisplayName(currentUser.fullName)}
+            </p>
+            <div className="flex justify-end gap-2 mt-1">
+              <button onClick={() => setIsProfileModalOpen(true)} className="text-xs text-blue-400 hover:underline">Editar Perfil</button>
+              <span className="text-xs text-gray-600">|</span>
+              <button onClick={logout} className="text-xs text-red-400 hover:underline">Sair</button>
+            </div>
           </div>
-          <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center">
+          <div className="h-12 w-12 rounded-full bg-gray-700 text-gray-400 overflow-hidden flex items-center justify-center cursor-pointer border-2 border-transparent hover:border-gray-500 transition-all" onClick={() => setIsProfileModalOpen(true)}>
             {currentUser.profilePicture ? (
               <img src={currentUser.profilePicture} alt="Foto do perfil" className="h-full w-full object-cover" />
             ) : (
@@ -96,11 +104,11 @@ export const HomeSelector: React.FC<HomeSelectorProps> = ({ setView }) => {
         </div>
       )}
 
-      <div className="text-center mb-12 mt-8">
-        <h1 className="text-4xl font-extrabold text-white sm:text-5xl md:text-6xl">
+      <div className="text-center mb-12 mt-20 md:mt-16">
+        <h1 className="text-3xl font-extrabold text-white sm:text-4xl md:text-5xl">
           Sistema de Gestão de Senhas
         </h1>
-        <p className="mt-4 text-xl text-gray-400">
+        <p className="mt-4 text-lg text-gray-400 sm:text-xl">
           Juizado Especial Cível de Guarulhos
         </p>
       </div>
@@ -143,9 +151,13 @@ export const HomeSelector: React.FC<HomeSelectorProps> = ({ setView }) => {
               <h2 className="text-xl font-bold text-white">Estatísticas</h2>
               <p className="text-gray-400 mt-2 text-sm">Visualizar relatórios.</p>
             </div>
-          </>
+            </>
+          )}
+        </div>
+        
+        {isProfileModalOpen && (
+            <ProfileEditModal onClose={() => setIsProfileModalOpen(false)} />
         )}
       </div>
-    </div>
   );
 };

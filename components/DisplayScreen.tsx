@@ -80,6 +80,7 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
   const [showBlink, setShowBlink] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [isHeaderVisible, setIsHeaderVisible] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [tipIndex, setTipIndex] = useState(0);
   const [tipAnimation, setTipAnimation] = useState(true);
 
@@ -93,6 +94,42 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
       }
     }
   };
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((e) => {
+        console.error(`Error attempting to enable full-screen mode: ${e.message}`);
+      });
+      setIsHeaderVisible(false);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isNowFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(isNowFullscreen);
+      if (isNowFullscreen) {
+        setIsHeaderVisible(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'f') {
+        toggleFullscreen();
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     if (calledHistory.length > 0) {
@@ -124,21 +161,49 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
   const olderCalledTickets = calledHistory.slice(1, 5);
 
   return (
-    <div className="relative flex flex-col h-screen bg-black text-white overflow-hidden">
-      <button
-        onClick={() => setIsHeaderVisible(!isHeaderVisible)}
-        className="absolute top-4 right-4 z-30 p-2 bg-gray-800/70 rounded-full hover:bg-gray-700 transition-colors"
-        aria-label="Mostrar/Ocultar Cabeçalho"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-white"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-      </button>
+    <div className="fixed inset-0 w-screen h-screen bg-black text-white overflow-hidden z-[9999] flex flex-col">
+      <div className="absolute top-8 right-8 z-[10000] flex gap-4">
+        <button
+          onClick={toggleFullscreen}
+          className={`px-6 py-4 rounded-3xl transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center group ${
+            isFullscreen 
+              ? 'bg-blue-600 border-blue-300' 
+              : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-blue-500'
+          }`}
+          title={isFullscreen ? "Sair da Tela Cheia (Tecla F)" : "Ativar Tela Cheia (Tecla F)"}
+        >
+          {isFullscreen ? (
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white group-hover:scale-110"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white group-hover:scale-110"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+          )}
+          <span className="ml-3 text-sm font-black text-white uppercase tracking-wider">{isFullscreen ? 'Sair [F]' : 'Tela Cheia [F]'}</span>
+        </button>
 
-      {isHeaderVisible && (
-        <div className="absolute top-0 left-0 right-0 z-20">
-          <nav className="bg-gray-900 p-2">
-            <button onClick={() => setView('home')} className="text-red-400 hover:text-red-300 font-semibold">
-              &larr; Voltar à Tela Principal
+        {!isFullscreen && (
+          <button
+            onClick={() => setIsHeaderVisible(!isHeaderVisible)}
+            className={`px-6 py-4 rounded-3xl transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center group ${
+              isHeaderVisible 
+                ? 'bg-red-600 border-red-300' 
+                : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-red-500'
+            }`}
+            title="Configurações e Sair"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`text-white group-hover:rotate-90 transition-transform duration-500`}><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span className="ml-3 text-sm font-black text-white uppercase tracking-wider">Menu</span>
+          </button>
+        )}
+      </div>
+
+      {isHeaderVisible && !isFullscreen && (
+        <div className="absolute top-0 left-0 right-0 z-[10001] animate-slide-down">
+          <nav className="bg-gray-900/95 backdrop-blur-md p-3 border-b border-gray-800 flex justify-between items-center">
+            <button onClick={() => setView('home')} className="flex items-center gap-2 text-red-400 hover:text-red-300 font-bold transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              Sair do Painel
             </button>
+            <span className="text-gray-500 text-xs font-mono">Modo de Configuração Ativo</span>
           </nav>
           <Header
             title="Painel de Atendimento"

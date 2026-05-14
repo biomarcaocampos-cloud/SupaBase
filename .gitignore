@@ -1,5 +1,5 @@
-# Ignorar dependências do Node
 node_modules
-
-# Ignorar o arquivo de variáveis de ambiente
 .env
+dist
+.DS_Store
+*.local

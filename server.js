@@ -97,6 +97,11 @@ function startServer() {
         `);
     });
 
+    // Rota de status para o frontend
+    app.get('/api/status', (req, res) => {
+        res.json({ status: 'online', mode: dbReady ? 'database' : 'local' });
+    });
+
     // POST - Create new ticket
     app.post('/api/tickets', async (req, res) => {
         const { type, service } = req.body;
@@ -363,7 +368,7 @@ function startServer() {
     // PATCH user (update role/permissions)
     app.patch('/api/users/:id', async (req, res) => {
         const { id } = req.params;
-        const { role, fullName, email, cpf, status, password } = req.body;
+        const { role, fullName, email, cpf, status, password, profile_picture } = req.body;
 
         try {
             if (dbReady) {
@@ -394,6 +399,10 @@ function startServer() {
                 if (password) {
                     updates.push(`password = $${paramCount++}`);
                     params.push(password);
+                }
+                if (profile_picture !== undefined) {
+                    updates.push(`profile_picture = $${paramCount++}`);
+                    params.push(profile_picture);
                 }
 
                 if (updates.length === 0) {
@@ -509,7 +518,9 @@ function startServer() {
                 }
                 if (current_ticket_info !== undefined) {
                     updates.push(`current_ticket_info = $${paramCount++}`);
-                    params.push(JSON.stringify(current_ticket_info));
+                    // Pass as plain object — pg handles JSONB conversion automatically.
+                    // Using JSON.stringify would store it as an escaped string, breaking reads.
+                    params.push(current_ticket_info === null ? null : current_ticket_info);
                 }
                 if (service_start_time !== undefined) {
                     updates.push(`service_start_time = $${paramCount++}`);
@@ -548,7 +559,7 @@ function startServer() {
     app.get('/api/called-history', async (req, res) => {
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM called_history ORDER BY called_at DESC LIMIT 100');
+                const result = await pool.query('SELECT * FROM called_history ORDER BY timestamp DESC LIMIT 100');
                 return res.json({ history: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -561,12 +572,12 @@ function startServer() {
 
     // POST called history
     app.post('/api/called-history', async (req, res) => {
-        const { ticket_number, desk_id, desk_name } = req.body;
+        const { ticket_number, desk_number, ticket_type, timestamp } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    'INSERT INTO called_history (ticket_number, desk_id, desk_name) VALUES ($1, $2, $3) RETURNING *',
-                    [ticket_number, desk_id, desk_name]
+                    'INSERT INTO called_history (ticket_number, desk_number, ticket_type, timestamp) VALUES ($1, $2, $3, $4) RETURNING *',
+                    [ticket_number, desk_number, ticket_type, timestamp]
                 );
                 return res.status(201).json(result.rows[0]);
             } else {
@@ -582,7 +593,7 @@ function startServer() {
     app.get('/api/completed-services', async (req, res) => {
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM completed_services ORDER BY completed_at DESC LIMIT 100');
+                const result = await pool.query('SELECT * FROM completed_services ORDER BY completed_timestamp DESC LIMIT 100');
                 return res.json({ services: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -595,13 +606,16 @@ function startServer() {
 
     // POST completed services
     app.post('/api/completed-services', async (req, res) => {
-        const { ticket_number, service_type, desk_id, user_name, notes, duration } = req.body;
+        const { ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    'INSERT INTO completed_services (ticket_number, service_type, desk_id, user_name, notes, duration) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-                    [ticket_number, service_type, desk_id, user_name, notes, duration]
+                    `INSERT INTO completed_services
+                    (ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+                    [ticket_number, desk_id, user_id, user_name, service_duration, wait_time, completed_timestamp, service]
                 );
+                console.log(`✅ Serviço completado salvo: ${ticket_number}`);
                 return res.status(201).json(result.rows[0]);
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -616,7 +630,7 @@ function startServer() {
     app.get('/api/abandoned-tickets', async (req, res) => {
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM abandoned_tickets ORDER BY abandoned_at DESC LIMIT 100');
+                const result = await pool.query('SELECT * FROM abandoned_tickets ORDER BY abandoned_timestamp DESC LIMIT 100');
                 return res.json({ tickets: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -672,9 +686,17 @@ function startServer() {
 
     // GET agenda
     app.get('/api/agenda', async (req, res) => {
+        const { status } = req.query;
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM agenda ORDER BY date, time');
+                let query = 'SELECT * FROM agenda';
+                const params = [];
+                if (status) {
+                    query += ' WHERE status = $1';
+                    params.push(status);
+                }
+                query += ' ORDER BY data_agendamento, horario';
+                const result = await pool.query(query, params);
                 return res.json({ agenda: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -687,12 +709,18 @@ function startServer() {
 
     // POST agenda
     app.post('/api/agenda', async (req, res) => {
-        const { date, time, customer_name, service_type, notes, documents } = req.body;
+        const {
+            id, ticket_number, nome_completo, cpf, telefone, email,
+            data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro
+        } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    'INSERT INTO agenda (date, time, customer_name, service_type, notes, documents) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-                    [date, time, customer_name, service_type, notes, documents]
+                    `INSERT INTO agenda (
+                        id, ticket_number, nome_completo, cpf, telefone, email,
+                        data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+                    [id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro]
                 );
                 return res.status(201).json(result.rows[0]);
             } else {
@@ -707,13 +735,25 @@ function startServer() {
     // PATCH agenda
     app.patch('/api/agenda/:id', async (req, res) => {
         const { id } = req.params;
-        const { status, notes } = req.body;
+        const { nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, status } = req.body;
         try {
             if (dbReady) {
-                const result = await pool.query(
-                    'UPDATE agenda SET status = COALESCE($1, status), notes = COALESCE($2, notes) WHERE id = $3 RETURNING *',
-                    [status, notes, id]
-                );
+                const updates = [];
+                const params = [];
+                let n = 1;
+                if (nome_completo !== undefined) { updates.push(`nome_completo = $${n++}`); params.push(nome_completo); }
+                if (cpf !== undefined) { updates.push(`cpf = $${n++}`); params.push(cpf); }
+                if (telefone !== undefined) { updates.push(`telefone = $${n++}`); params.push(telefone); }
+                if (email !== undefined) { updates.push(`email = $${n++}`); params.push(email); }
+                if (data_agendamento !== undefined) { updates.push(`data_agendamento = $${n++}`); params.push(data_agendamento); }
+                if (horario !== undefined) { updates.push(`horario = $${n++}`); params.push(horario); }
+                if (servico !== undefined) { updates.push(`servico = $${n++}`); params.push(servico); }
+                if (observacoes !== undefined) { updates.push(`observacoes = $${n++}`); params.push(observacoes); }
+                if (documentos_necessarios !== undefined) { updates.push(`documentos_necessarios = $${n++}`); params.push(documentos_necessarios); }
+                if (status !== undefined) { updates.push(`status = $${n++}`); params.push(status); }
+                if (updates.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
+                params.push(id);
+                const result = await pool.query(`UPDATE agenda SET ${updates.join(', ')} WHERE id = $${n} RETURNING *`, params);
                 if (result.rowCount === 0) return res.status(404).json({ error: 'Agendamento não encontrado.' });
                 return res.json(result.rows[0]);
             } else {
@@ -804,12 +844,15 @@ function startServer() {
 
     // POST activity log
     app.post('/api/activity-logs', async (req, res) => {
-        const { action, details, user_id, user_name } = req.body;
+        const { id, user_id, user_name, timestamp, type, duration } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    'INSERT INTO activity_logs (action, details, user_id, user_name) VALUES ($1, $2, $3, $4) RETURNING *',
-                    [action, JSON.stringify(details), user_id, user_name]
+                    `INSERT INTO activity_logs (id, user_id, user_name, timestamp, type, duration)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     ON CONFLICT (id) DO UPDATE SET duration = EXCLUDED.duration
+                     RETURNING *`,
+                    [id, user_id, user_name, timestamp, type, duration || null]
                 );
                 return res.status(201).json(result.rows[0]);
             } else {
@@ -817,6 +860,27 @@ function startServer() {
             }
         } catch (error) {
             console.error('Erro ao salvar log:', error);
+            res.status(500).json({ error: 'Erro interno.' });
+        }
+    });
+
+    // PATCH activity log (update duration)
+    app.patch('/api/activity-logs/:id', async (req, res) => {
+        const { id } = req.params;
+        const { duration } = req.body;
+        try {
+            if (dbReady) {
+                const result = await pool.query(
+                    'UPDATE activity_logs SET duration = $1 WHERE id = $2 RETURNING *',
+                    [duration, id]
+                );
+                if (result.rowCount === 0) return res.status(404).json({ error: 'Log não encontrado.' });
+                return res.json(result.rows[0]);
+            } else {
+                return res.status(503).json({ error: 'Banco de dados não disponível.' });
+            }
+        } catch (error) {
+            console.error('Erro ao atualizar log:', error);
             res.status(500).json({ error: 'Erro interno.' });
         }
     });
