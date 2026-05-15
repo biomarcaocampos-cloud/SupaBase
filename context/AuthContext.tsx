@@ -233,6 +233,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (currentUser.id === updatedUserWithChanges.id) {
                 const updatedUser = { ...currentUser, ...updatedUserWithChanges };
                 setCurrentUser(updatedUser);
+                
+                // IMPORTANTE: Atualiza o sessionStorage para que a foto persista após o refresh
+                const loggedInUserData = sessionStorage.getItem('loggedInUserData');
+                if (loggedInUserData) {
+                    const userData = JSON.parse(loggedInUserData);
+                    const newBackendData = {
+                        ...userData,
+                        full_name: updatedUserWithChanges.fullName || userData.full_name,
+                        profile_picture: updatedUserWithChanges.profilePicture !== undefined 
+                            ? updatedUserWithChanges.profilePicture 
+                            : userData.profile_picture,
+                        role: updatedUserWithChanges.role === 'MANAGER' ? 'admin' : 
+                              (updatedUserWithChanges.role === 'ATTENDANT' ? 'user' : userData.role),
+                        status: updatedUserWithChanges.isActive !== undefined 
+                            ? (updatedUserWithChanges.isActive ? 'ATIVO' : 'INATIVO') 
+                            : userData.status
+                    };
+                    sessionStorage.setItem('loggedInUserData', JSON.stringify(newBackendData));
+                }
             }
 
             console.log('✅ Usuário atualizado com sucesso');
