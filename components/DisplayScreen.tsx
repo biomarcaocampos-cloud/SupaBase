@@ -165,19 +165,18 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
       <div className="absolute top-8 right-8 z-[10000] flex gap-4">
         <button
           onClick={toggleFullscreen}
-          className={`px-6 py-4 rounded-3xl transition-all duration-300 shadow-[0_0_30px_rgba(0,0,0,0.5)] border-2 flex items-center justify-center group ${
+          className={`p-3 rounded-2xl transition-all duration-300 shadow-lg border flex items-center justify-center group ${
             isFullscreen 
-              ? 'bg-blue-600 border-blue-300' 
-              : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-blue-500'
+              ? 'bg-blue-600/20 border-blue-500/30 text-blue-400 hover:bg-blue-600/40 opacity-40 hover:opacity-100' 
+              : 'bg-gray-800/50 border-gray-700 hover:bg-gray-700 hover:border-blue-500'
           }`}
           title={isFullscreen ? "Sair da Tela Cheia (Tecla F)" : "Ativar Tela Cheia (Tecla F)"}
         >
           {isFullscreen ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white group-hover:scale-110"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:scale-110"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
           ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-white group-hover:scale-110"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="group-hover:scale-110"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
           )}
-          <span className="ml-3 text-sm font-black text-white uppercase tracking-wider">{isFullscreen ? 'Sair [F]' : 'Tela Cheia [F]'}</span>
         </button>
 
         {!isFullscreen && (
