@@ -909,7 +909,8 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
         [desks, isLive]
     );
 
-    const { totalServed, totalAbandoned, estimatedTotalRemainingTime, statsByServiceType, statsByUser, normalBreakdown, prefBreakdown, normalTooltip, prefTooltip, statsByTicketType } = (() => {
+    try {
+    const { totalServed, totalAbandoned, totalIssued, estimatedTotalRemainingTime, statsByServiceType, statsByUser, normalBreakdown, prefBreakdown, normalTooltip, prefTooltip, statsByTicketType } = (() => {
         const totalServed = completedServices.length;
         const totalServiceDuration = completedServices.reduce((sum, s) => sum + s.serviceDuration, 0);
         const overallAvgServiceTime = totalServed > 0 ? totalServiceDuration / totalServed : 0;
@@ -917,14 +918,23 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
         const statsByServiceType = Object.keys(ServiceTypeDetails).reduce((acc, s) => {
             const service = s as ServiceType;
             const ofType = completedServices.filter(c => c.service === service);
+            const abandonedOfType = abandonedTickets.filter(t => t.service === service);
+            const waitingOfType = [...waitingNormal, ...waitingPreferential].filter(t => t.service === service);
+            
             const count = ofType.length;
+            const abandonedCount = abandonedOfType.length;
+            const waitingCount = waitingOfType.length;
+            const issuedCount = count + abandonedCount + waitingCount;
+
             acc[service] = {
                 count,
+                abandonedCount,
+                issuedCount,
                 avgWaitTime: count > 0 ? ofType.reduce((sum, s) => sum + s.waitTime, 0) / count : 0,
                 avgServiceTime: count > 0 ? ofType.reduce((sum, s) => sum + s.serviceDuration, 0) / count : 0,
             };
             return acc;
-        }, {} as Record<ServiceType, { count: number; avgWaitTime: number; avgServiceTime: number; }>);
+        }, {} as Record<ServiceType, { count: number; abandonedCount: number; issuedCount: number; avgWaitTime: number; avgServiceTime: number; }>);
 
         const statsByUser = Array.from(new Set(completedServices.map(s => s.userId))).map(userId => {
             const userServices = completedServices.filter(s => s.userId === userId);
@@ -960,9 +970,13 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                 .join('\n');
         };
 
+        const totalAbandoned = abandonedTickets.length;
+        const totalIssued = totalServed + totalAbandoned + pendingCount;
+
         return {
             totalServed,
-            totalAbandoned: abandonedTickets.length,
+            totalAbandoned,
+            totalIssued,
             estimatedTotalRemainingTime: (pendingCount * overallAvgServiceTime) / capacity,
             statsByServiceType,
             statsByUser,
@@ -972,12 +986,14 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
             prefTooltip: getBreakdown(waitingPreferential),
             statsByTicketType: {
                 'NORMAL': {
-                    count: completedServices.filter(s => s.ticketNumber.startsWith('N')).length,
-                    abandoned: abandonedTickets.filter(t => t.ticketNumber.startsWith('N')).length
+                    issued: completedServices.filter(s => String(s.ticketNumber || "").startsWith('N')).length + abandonedTickets.filter(t => String(t.ticketNumber || "").startsWith('N')).length + (waitingNormal?.length || 0),
+                    count: completedServices.filter(s => String(s.ticketNumber || "").startsWith('N')).length,
+                    abandoned: abandonedTickets.filter(t => String(t.ticketNumber || "").startsWith('N')).length
                 },
                 'PREFERENCIAL': {
-                    count: completedServices.filter(s => !s.ticketNumber.startsWith('N')).length,
-                    abandoned: abandonedTickets.filter(t => t.ticketNumber.startsWith('N')).length
+                    issued: completedServices.filter(s => !String(s.ticketNumber || "").startsWith('N')).length + abandonedTickets.filter(t => !String(t.ticketNumber || "").startsWith('N')).length + (waitingPreferential?.length || 0),
+                    count: completedServices.filter(s => !String(s.ticketNumber || "").startsWith('N')).length,
+                    abandoned: abandonedTickets.filter(t => !String(t.ticketNumber || "").startsWith('N')).length
                 }
             }
         };
@@ -1055,7 +1071,9 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
             const serviceRows = Object.entries(statsByServiceType).map(([key, value]) => `
                 <tr>
                     <td style="padding: 5px; border: 1px solid #ddd;">${ServiceTypeDetails[key as ServiceType]?.title || key}</td>
-                    <td style="padding: 5px; border: 1px solid #ddd; text-align: center;">${value.count}</td>
+                    <td style="padding: 5px; border: 1px solid #ddd; text-align: center; font-weight: bold;">${value.issuedCount}</td>
+                    <td style="padding: 5px; border: 1px solid #ddd; text-align: center; color: #006600;">${value.count}</td>
+                    <td style="padding: 5px; border: 1px solid #ddd; text-align: center; color: #b40000;">${value.abandonedCount}</td>
                     <td style="padding: 5px; border: 1px solid #ddd; text-align: right; font-family: monospace;">${formatTime(value.avgWaitTime)}</td>
                     <td style="padding: 5px; border: 1px solid #ddd; text-align: right; font-family: monospace;">${formatTime(value.avgServiceTime)}</td>
                 </tr>`).join('');
@@ -1088,24 +1106,28 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                     <p><strong>Período:</strong> ${startDate.toLocaleDateString('pt-BR')} até ${endDate.toLocaleDateString('pt-BR')}</p>
                     
                     <div class="summary-box">
-                        <div class="stat">
-                            <strong>ATENDIDOS</strong>
-                            <div class="stat-val">${totalServed}</div>
+                        <div class="stat" style="background: #e7f3ff;">
+                            <strong>TOTAL EMITIDAS</strong>
+                            <div class="stat-val" style="color: #004085;">${totalIssued}</div>
                         </div>
-                        <div class="stat">
-                            <strong>ABANDONOS</strong>
-                            <div class="stat-val">${totalAbandoned}</div>
+                        <div class="stat" style="background: #e6ffed;">
+                            <strong>TOTAL ATENDIDOS</strong>
+                            <div class="stat-val" style="color: #1e7e34;">${totalServed}</div>
+                        </div>
+                        <div class="stat" style="background: #fff5f5;">
+                            <strong>TOTAL ABANDONOS</strong>
+                            <div class="stat-val" style="color: #b40000;">${totalAbandoned}</div>
                         </div>
                     </div>
 
                     <div class="summary-box" style="margin-top: 0;">
                         <div class="stat" style="background: #f0f7ff;">
-                            <strong>SENHAS NORMAIS</strong>
-                            <div class="stat-val" style="color: #0056b3;">${statsByTicketType.NORMAL.count}</div>
+                            <strong>NORMAIS (Atend/Emit)</strong>
+                            <div class="stat-val" style="color: #0056b3;">${statsByTicketType.NORMAL.count} / ${statsByTicketType.NORMAL.issued}</div>
                         </div>
                         <div class="stat" style="background: #fffdf0;">
-                            <strong>SENHAS PREFERENCIAIS</strong>
-                            <div class="stat-val" style="color: #856404;">${statsByTicketType.PREFERENCIAL.count}</div>
+                            <strong>PREFERENCIAIS (Atend/Emit)</strong>
+                            <div class="stat-val" style="color: #856404;">${statsByTicketType.PREFERENCIAL.count} / ${statsByTicketType.PREFERENCIAL.issued}</div>
                         </div>
                     </div>
 
@@ -1117,7 +1139,7 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
 
                     <h2>Desempenho por Serviço</h2>
                     <table>
-                        <thead><tr><th>Serviço</th><th style="text-align:center">Qtd</th><th style="text-align:right">Espera Média</th><th style="text-align:right">Atend. Médio</th></tr></thead>
+                        <thead><tr><th>Serviço</th><th style="text-align:center">Emitidas</th><th style="text-align:center">Atendidas</th><th style="text-align:center">Aband.</th><th style="text-align:right">Espera Média</th><th style="text-align:right">Atend. Médio</th></tr></thead>
                         <tbody>${serviceRows}</tbody>
                     </table>
 
@@ -1131,8 +1153,9 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
             setTimeout(() => printWindow?.print(), 500);
         };
 
-        return (
-            <div className="fixed inset-0 bg-black bg-opacity-90 flex justify-center items-center z-50 p-4 overflow-y-auto" onClick={() => setIsReportModalOpen(false)}>
+        try {
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-90 flex justify-center items-center z-50 p-4 overflow-y-auto" onClick={() => setIsReportModalOpen(false)}>
                 <div className="bg-white text-gray-900 rounded-xl shadow-2xl w-full max-w-5xl p-8 my-8 print:hidden" onClick={e => e.stopPropagation()}>
                     <div className="flex justify-between items-center mb-8 border-b-2 border-red-700 pb-4">
                         <div>
@@ -1158,6 +1181,10 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                             </div>
                             <div className="flex gap-8">
                                 <div className="text-right">
+                                    <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Emitidas</p>
+                                    <p className="text-4xl font-black text-blue-600">{totalIssued}</p>
+                                </div>
+                                <div className="text-right border-l pl-8">
                                     <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Atendidos</p>
                                     <p className="text-4xl font-black text-green-600">{totalServed}</p>
                                 </div>
@@ -1168,26 +1195,35 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-                                <h3 className="text-sm font-black text-gray-400 uppercase mb-4 border-b pb-2 flex justify-between">
-                                    <span>Tipos de Atendimento</span>
-                                    <span>Volume</span>
-                                </h3>
-                                <div className="space-y-3">
-                                    {Object.entries(statsByServiceType).map(([key, value], i) => (
-                                        <div key={i} className="flex justify-between items-center group">
-                                            <span className="font-bold text-gray-700 text-sm">{ServiceTypeDetails[key as ServiceType]?.title || key}</span>
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-1.5 bg-gray-100 w-24 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-red-600 rounded-full" style={{ width: `${(value.count / totalServed) * 100}%` }}></div>
-                                                </div>
-                                                <span className="bg-gray-100 text-gray-800 px-2 py-1 rounded font-black text-xs min-w-[30px] text-center">{value.count}</span>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
+                            <h3 className="text-sm font-black text-gray-400 uppercase mb-4 border-b pb-2">Desempenho Detalhado por Serviço</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="text-left text-gray-400 border-b">
+                                            <th className="pb-2 font-black uppercase text-[10px]">Serviço</th>
+                                            <th className="pb-2 font-black uppercase text-[10px] text-center">Emitidas</th>
+                                            <th className="pb-2 font-black uppercase text-[10px] text-center">Atendidas</th>
+                                            <th className="pb-2 font-black uppercase text-[10px] text-center">Aband.</th>
+                                            <th className="pb-2 font-black uppercase text-[10px] text-right">Espera Média</th>
+                                            <th className="pb-2 font-black uppercase text-[10px] text-right">Atendimento</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {Object.entries(statsByServiceType).map(([key, value], i) => (
+                                            <tr key={i} className="hover:bg-gray-50 transition-colors">
+                                                <td className="py-3 font-bold text-gray-700">{ServiceTypeDetails[key as ServiceType]?.title || key}</td>
+                                                <td className="py-3 text-center font-black text-blue-600 bg-blue-50/30">{value.issuedCount}</td>
+                                                <td className="py-3 text-center font-bold text-green-600">{value.count}</td>
+                                                <td className="py-3 text-center font-bold text-red-500">{value.abandonedCount}</td>
+                                                <td className="py-3 text-right font-mono text-gray-500">{formatTime(value.avgWaitTime)}</td>
+                                                <td className="py-3 text-right font-mono text-gray-500">{formatTime(value.avgServiceTime)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
+                        </div>
                             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
                                 <h3 className="text-sm font-black text-gray-400 uppercase mb-4 border-b pb-2 flex justify-between">
                                     <span>Top Produtividade</span>
@@ -1208,7 +1244,6 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                                     ))}
                                 </div>
                             </div>
-                        </div>
 
                         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
                             <h3 className="text-sm font-black text-gray-400 uppercase mb-4 border-b pb-2">Distribuição por Categoria de Senha</h3>
@@ -1237,8 +1272,19 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                         </div>
                     </div>
                 </div>
-            </div>
-        );
+                </div>
+            );
+        } catch (e: any) {
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-90 flex justify-center items-center z-50 p-4" onClick={() => setIsReportModalOpen(false)}>
+                    <div className="bg-red-900 text-white p-8 rounded-xl max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+                        <h2 className="text-2xl font-bold mb-4">Erro no Relatório Detalhado</h2>
+                        <pre className="bg-black p-4 text-sm text-red-300 overflow-auto">{e.message}</pre>
+                        <button onClick={() => setIsReportModalOpen(false)} className="mt-6 bg-white text-red-900 px-4 py-2 rounded font-bold">Fechar</button>
+                    </div>
+                </div>
+            );
+        }
     };
 
     const StatCard: React.FC<{ cardTitle: string; value: string; subValue?: string; icon: React.ReactNode; onClick?: () => void; disabled?: boolean; tooltip?: string; }> = ({ cardTitle, value, subValue, icon, onClick, disabled, tooltip }) => (
@@ -1398,6 +1444,14 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
             <ReportModal />
         </div>
     );
+    } catch (e: any) {
+        return <div className="p-8 text-white bg-red-900 min-h-screen">
+            <h1 className="text-3xl font-bold mb-4">Erro Crítico no Gerenciamento</h1>
+            <p className="text-xl">O componente travou ao calcular as estatísticas. Detalhes:</p>
+            <pre className="bg-black p-4 mt-4 text-red-300 font-mono text-sm overflow-auto">{e.message}</pre>
+            <pre className="bg-black p-4 mt-2 text-gray-400 font-mono text-xs overflow-auto">{e.stack}</pre>
+        </div>;
+    }
 };
 
 type View = 'home' | 'display' | 'dispenser' | 'desk' | 'management' | 'management_agenda' | 'management_users';

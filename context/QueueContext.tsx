@@ -92,8 +92,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       console.log('📝 [REFRESH] Senhas aguardando recebidas do backend:', tickets.length);
       console.log('📝 [REFRESH] Detalhes das senhas:', tickets);
 
+      const today = new Date().setHours(0,0,0,0);
+
       const waitingNormal = tickets
-        .filter((t: any) => t.ticket_type === 'NORMAL')
+        .filter((t: any) => t.ticket_type === 'NORMAL' && new Date(t.created_at).setHours(0,0,0,0) === today)
         .map((t: any) => ({
           number: t.ticket_number,
           dispenseTimestamp: new Date(t.created_at).getTime(),
@@ -105,7 +107,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       console.log('📝 [REFRESH] Senhas NORMAIS filtradas:', waitingNormal.length);
 
       const waitingPreferential = tickets
-        .filter((t: any) => t.ticket_type === 'PREFERENCIAL')
+        .filter((t: any) => t.ticket_type === 'PREFERENCIAL' && new Date(t.created_at).setHours(0,0,0,0) === today)
         .map((t: any) => ({
           number: t.ticket_number,
           dispenseTimestamp: new Date(t.created_at).getTime(),

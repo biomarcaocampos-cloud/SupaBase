@@ -117,29 +117,58 @@ function startServer() {
         if (!type || !service) {
             return res.status(400).json({ error: 'Dados inválidos.' });
         }
+
+        // Determinar Sigla (NT, NC, NA, TP, TC, TA)
+        let prefix = '';
+        if (type === 'NORMAL') {
+            prefix = 'N';
+            if (service === 'TRIAGEM') prefix += 'T';
+            else if (service === 'ATERMACAO') prefix += 'A';
+            else prefix += 'C'; // Atendimento/Consulta
+        } else {
+            prefix = 'T'; // Preferencial
+            if (service === 'TRIAGEM') prefix += 'P';
+            else if (service === 'ATERMACAO') prefix += 'A';
+            else prefix += 'C'; // Atendimento/Consulta
+        }
+
         try {
             let ticketNumberStr;
             if (dbReady) {
-                const sequenceName = type === 'NORMAL' ? 'normal_ticket_sequence' : 'preferential_ticket_sequence';
-                const nextValRes = await pool.query(`SELECT nextval('${sequenceName}')`);
-                const nextVal = nextValRes.rows[0].nextval;
-                const prefix = type === 'NORMAL' ? 'N' : 'P';
-                ticketNumberStr = `${prefix}${String(nextVal).padStart(3, '0')}`;
+                // Busca o maior número daquela sigla gerado NO DIA DE HOJE
+                // Usamos CURRENT_DATE para garantir o reinício diário
+                const queryMax = `
+                    SELECT MAX(CAST(SUBSTRING(ticket_number, 3) AS INTEGER)) as max_num 
+                    FROM waiting_tickets 
+                    WHERE ticket_number LIKE $1 AND created_at >= CURRENT_DATE
+                `;
+                const maxRes = await pool.query(queryMax, [prefix + '%']);
+                const nextNum = (maxRes.rows[0].max_num || 0) + 1;
+                
+                ticketNumberStr = `${prefix}${String(nextNum).padStart(3, '0')}`;
+                
                 const insertQuery = `
                     INSERT INTO waiting_tickets (ticket_number, ticket_type, service, status, observations)
                     VALUES ($1, $2, $3, 'AGUARDANDO', $4)
                     RETURNING *;`;
                 const result = await pool.query(insertQuery, [ticketNumberStr, type, service, observations || null]);
-                console.log(`[SUPABASE/DB] Nova senha gerada: ${ticketNumberStr} (${service})`);
+                console.log(`[DATABASE] Nova senha: ${ticketNumberStr} | Tipo: ${type} | Hoje: ${new Date().toLocaleDateString()}`);
                 return res.status(201).json(result.rows[0]);
             } else {
-                if (type === 'NORMAL') {
-                    localNormalCount++;
-                    ticketNumberStr = `N${String(localNormalCount).padStart(3, '0')}`;
-                } else {
-                    localPrefCount++;
-                    ticketNumberStr = `P${String(localPrefCount).padStart(3, '0')}`;
+                // Modo Memória (Local)
+                const today = new Date().setHours(0,0,0,0);
+                const todaysTickets = localWaitList.filter(t => 
+                    t.ticket_number.startsWith(prefix) && 
+                    new Date(t.created_at).setHours(0,0,0,0) === today
+                );
+                
+                let nextNum = 1;
+                if (todaysTickets.length > 0) {
+                    const nums = todaysTickets.map(t => parseInt(t.ticket_number.substring(2)));
+                    nextNum = Math.max(...nums) + 1;
                 }
+
+                ticketNumberStr = `${prefix}${String(nextNum).padStart(3, '0')}`;
                 const newTicket = {
                     id: Date.now(),
                     ticket_number: ticketNumberStr,
@@ -150,11 +179,11 @@ function startServer() {
                     status: 'AGUARDANDO'
                 };
                 localWaitList.push(newTicket);
-                console.log(`[MEMÓRIA] Nova senha: ${ticketNumberStr}`);
+                console.log(`[MEMORY] Nova senha: ${ticketNumberStr}`);
                 return res.status(201).json(newTicket);
             }
         } catch (error) {
-            console.error('Erro no servidor:', error);
+            console.error('Erro ao gerar senha:', error);
             res.status(500).json({ error: 'Erro interno ao gerar senha.' });
         }
     });
