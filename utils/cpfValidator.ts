@@ -42,6 +42,12 @@ export const validateCPF = (cpf: string): boolean => {
   return true;
 };
 
+export const formatCPF = (cpf: string): string => {
+    const cpfClean = cpf.replace(/\D/g, '');
+    if (cpfClean.length !== 11) return cpf;
+    return cpfClean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+};
+
 export const validateEmail = (email: string): boolean => {
     if (!email) return true; // Not mandatory
     const re = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;

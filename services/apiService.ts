@@ -185,8 +185,11 @@ export const historyApi = {
     },
 
     // Get completed services
-    getCompletedServices: async (limit = 100) => {
-        const response = await fetch(`${API_BASE_URL}/api/completed-services?limit=${limit}`);
+    getCompletedServices: async (limit = 100, startDate?: number, endDate?: number) => {
+        const queryParams = new URLSearchParams({ limit: limit.toString() });
+        if (startDate) queryParams.append('startDate', startDate.toString());
+        if (endDate) queryParams.append('endDate', endDate.toString());
+        const response = await fetch(`${API_BASE_URL}/api/completed-services?${queryParams.toString()}`);
         return handleResponse(response);
     },
 
@@ -210,8 +213,11 @@ export const historyApi = {
     },
 
     // Get abandoned tickets
-    getAbandonedTickets: async (limit = 100) => {
-        const response = await fetch(`${API_BASE_URL}/api/abandoned-tickets?limit=${limit}`);
+    getAbandonedTickets: async (limit = 100, startDate?: number, endDate?: number) => {
+        const queryParams = new URLSearchParams({ limit: limit.toString() });
+        if (startDate) queryParams.append('startDate', startDate.toString());
+        if (endDate) queryParams.append('endDate', endDate.toString());
+        const response = await fetch(`${API_BASE_URL}/api/abandoned-tickets?${queryParams.toString()}`);
         return handleResponse(response);
     },
 
@@ -270,6 +276,7 @@ export const agendaApi = {
         observacoes?: string;
         documentos_necessarios?: string[];
         data_do_registro: number;
+        usuario_registro: string;
     }) => {
         const response = await fetch(`${API_BASE_URL}/api/agenda`, {
             method: 'POST',
@@ -335,14 +342,26 @@ export const activityLogApi = {
         return handleResponse(response);
     },
 
+    // Get all logs (can be filtered by user_id)
+    getAll: async (filters?: { user_id?: string; limit?: number }) => {
+        const queryParams = new URLSearchParams();
+        if (filters?.user_id) queryParams.append('user_id', filters.user_id);
+        if (filters?.limit) queryParams.append('limit', filters.limit.toString());
+        
+        const response = await fetch(`${API_BASE_URL}/api/activity-logs?${queryParams.toString()}`);
+        return handleResponse(response);
+    },
+
     // Create activity log
     create: async (data: {
         id: string;
         user_id: string;
         user_name: string;
         timestamp: number;
-        type: 'LOGIN' | 'LOGOUT';
+        type?: string;
+        action: 'LOGIN' | 'LOGOUT' | 'STATUS_CHANGE' | 'PASSWORD_RESET';
         duration?: number;
+        details?: string;
     }) => {
         const response = await fetch(`${API_BASE_URL}/api/activity-logs`, {
             method: 'POST',

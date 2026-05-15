@@ -147,16 +147,31 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
   }, [calledHistory, latestTicket, audioEnabled]);
 
   useEffect(() => {
-    if (alertMessage) return;
+    // Reset index if it becomes out of bounds due to tips changing
+    if (tipIndex >= tips.length && tips.length > 0) {
+      setTipIndex(0);
+    }
+  }, [tips.length, tipIndex]);
+
+  useEffect(() => {
+    // Se houver alerta real (ignora espaços), não gira as dicas
+    const hasActiveAlert = alertMessage && alertMessage.trim() !== '';
+    if (hasActiveAlert) return;
+    
+    // Usamos JSON.stringify para evitar que o Polling (refresh de 5s) 
+    // reinicie o cronômetro se as mensagens forem as mesmas.
     const interval = setInterval(() => {
+      if (tips.length <= 1) return;
+      
       setTipAnimation(false);
       setTimeout(() => {
-        setTipIndex((prevIndex) => (prevIndex + 1) % (tips.length || 1));
+        setTipIndex((prevIndex) => (prevIndex + 1) % tips.length);
         setTipAnimation(true);
       }, 500);
-    }, 10000);
+    }, 10000); // 10 segundos (agora estável)
+
     return () => clearInterval(interval);
-  }, [tips, alertMessage]);
+  }, [JSON.stringify(tips), alertMessage]);
 
   const olderCalledTickets = calledHistory.slice(1, 5);
 

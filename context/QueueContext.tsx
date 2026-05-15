@@ -15,26 +15,16 @@ export interface ReinsertResult {
 }
 
 const defaultTips = [
-  "Consulte seu processo regularmente no site do Tribunal de Justiça. Acompanhar o andamento é sua responsabilidade.",
-  "Prazos são importantes. Perder um prazo pode levar à extinção do seu processo. Fique atento às intimações.",
   "Mantenha seus dados atualizados. Informe ao cartório qualquer mudança de endereço, telefone ou e-mail.",
   "A primeira audiência é para tentativa de acordo (conciliação). Sua presença é obrigatória.",
   "A ausência do autor na audiência de conciliação resulta no arquivamento do processo.",
   "Leve todos os documentos originais que comprovem seu direito no dia da audiência.",
   "Em causas de até 20 salários mínimos, você não precisa de advogado. Acima disso, a presença de um é obrigatória.",
-  "Comunicações oficiais são feitas pelo Diário de Justiça Eletrônico ou no sistema do processo.",
-  "O cartório pode usar WhatsApp ou e-mail para intimações desde que sejam autorizados pela parte. Ofereça seu e-mail e não perca nenhuma intimação.",
-  "Atermação é o ato de registrar seu pedido inicial no Juizado, transformando sua reclamação em um processo.",
-  "Se a outra parte não cumprir a sentença, você deve pedir o 'Cumprimento de Sentença' para iniciar a cobrança.",
-  "Para apresentar um recurso contra a sentença, a contratação de um advogado é obrigatória.",
-  "Se não puder pagar as custas de um recurso, peça a 'Justiça Gratuita', comprovando sua necessidade.",
-  "Seja claro e objetivo em seus pedidos e depoimentos, focando nos fatos importantes para a sua causa.",
-  "Guarde todas as provas: e-mails, notas fiscais, contratos, conversas de WhatsApp e outros documentos.",
   "Muitas audiências são conduzidas por um Juiz Leigo, que prepara uma proposta de sentença para o Juiz Togado aprovar.",
   "Trate todos com respeito durante as audiências – a parte contrária, advogados e servidores.",
   "Um acordo pode resolver seu problema de forma mais rápida e eficaz. Esteja aberto a negociar.",
   "O acesso ao Juizado Especial Cível é gratuito na primeira instância. Custas só são cobradas em caso de recurso.",
-  "Se tiver dúvidas sobre o andamento do processo, procure o balcão de atendimento do cartório."
+  "Se tiver dúvidas sobre o andamento do processo, consulte o site do Tribunal de Justiça (TJSP)."
 ];
 
 const initialDesks: ServiceDesk[] = Array.from({ length: TOTAL_DESKS }, (_, i) => ({
@@ -44,6 +34,7 @@ const initialDesks: ServiceDesk[] = Array.from({ length: TOTAL_DESKS }, (_, i) =
   currentTicketInfo: null,
   serviceStartTime: null,
   services: [],
+  preferentialOnly: false,
 }));
 
 const initialState: QueueState = {
@@ -66,6 +57,7 @@ interface QueueContextType {
   callSpecificTicket: (deskId: number, type: 'NORMAL' | 'PREFERENCIAL') => void;
   login: (deskId: number, user: { id: string; displayName: string }, services: ServiceType[]) => void;
   logout: (deskId: number) => void;
+  updateDeskServices: (deskId: number, services: ServiceType[], preferentialOnly?: boolean) => Promise<void>;
   startService: (deskId: number) => void;
   endService: (deskId: number) => void;
   resetSystem: () => void;
@@ -77,6 +69,7 @@ interface QueueContextType {
   updateAgendaEntry: (updatedEntry: AgendaEntry) => Promise<void>;
   cancelAgendaEntry: (entryId: string) => void;
   refreshState: () => Promise<void>;
+  fetchHistoricalData: (startDate: number, endDate: number) => Promise<{ completedServices: CompletedService[], abandonedTickets: AbandonedTicket[] }>;
   recallTicket: (deskId: number) => Promise<void>;
   abandonTicket: (deskId: number) => Promise<void>;
 }
@@ -154,6 +147,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           currentTicketInfo: parsedTicketInfo,
           serviceStartTime: backendDesk.service_start_time,
           services: backendDesk.services || [],
+          preferentialOnly: !!backendDesk.preferential_only,
         };
       });
 
@@ -178,12 +172,12 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const completedResponse = await api.history.getCompletedServices(100);
         completedServices = (completedResponse.services || []).map((s: any) => ({
           ticketNumber: s.ticket_number,
-          deskId: s.desk_id,
+          deskId: Number(s.desk_id),
           userId: s.user_id,
           userName: s.user_name,
-          serviceDuration: s.service_duration,
-          waitTime: s.wait_time,
-          completedTimestamp: s.completed_timestamp,
+          serviceDuration: Number(s.service_duration),
+          waitTime: Number(s.wait_time),
+          completedTimestamp: Number(s.completed_timestamp),
           service: s.service,
         }));
         console.log('✅ [REFRESH] Serviços completados:', completedServices.length);
@@ -197,13 +191,13 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const abandonedResponse = await api.history.getAbandonedTickets(100);
         abandonedTickets = (abandonedResponse.tickets || []).map((t: any) => ({
           ticketNumber: t.ticket_number,
-          deskId: t.desk_id,
+          deskId: Number(t.desk_id),
           userId: t.user_id,
           userName: t.user_name,
-          calledTimestamp: t.called_timestamp,
-          abandonedTimestamp: t.abandoned_timestamp,
+          calledTimestamp: Number(t.called_timestamp),
+          abandonedTimestamp: Number(t.abandoned_timestamp),
           type: t.ticket_type,
-          waitTime: t.wait_time,
+          waitTime: Number(t.wait_time),
           service: t.service,
         }));
         console.log('❌ [REFRESH] Senhas abandonadas:', abandonedTickets.length);
@@ -229,7 +223,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           resumo: a.observacoes,
           documentos_selecionados: a.documentos_necessarios || [],
           data_do_registro: Number(a.data_do_registro),
-          status: a.status,
+          usuario_registro: a.usuario_registro || 'Desconhecido',
+          controle_id: a.controle_id,
+          status: a.status || 'AGENDADO',
+          compareceu_data: a.compareceu_data ? Number(a.compareceu_data) : undefined,
         }));
       } catch (error) {
         console.warn('⚠️ [REFRESH] Erro ao carregar agenda:', error);
@@ -291,6 +288,41 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } catch (error) {
       console.error('❌ [REFRESH] Erro ao carregar estado do backend:', error);
       // Keep current state if load fails
+    }
+  }, []);
+
+  const fetchHistoricalData = useCallback(async (startDate: number, endDate: number) => {
+    try {
+      const completedResponse = await api.history.getCompletedServices(500, startDate, endDate);
+      const abandonedResponse = await api.history.getAbandonedTickets(500, startDate, endDate);
+      
+      const completedServices = (completedResponse.services || []).map((s: any) => ({
+        ticketNumber: s.ticket_number,
+        deskId: Number(s.desk_id),
+        userId: s.user_id,
+        userName: s.user_name,
+        serviceDuration: Number(s.service_duration),
+        waitTime: Number(s.wait_time),
+        completedTimestamp: Number(s.completed_timestamp),
+        service: s.service,
+      }));
+      
+      const abandonedTickets = (abandonedResponse.tickets || []).map((t: any) => ({
+        ticketNumber: t.ticket_number,
+        deskId: Number(t.desk_id),
+        userId: t.user_id,
+        userName: t.user_name,
+        calledTimestamp: Number(t.called_timestamp),
+        abandonedTimestamp: Number(t.abandoned_timestamp),
+        type: t.ticket_type,
+        waitTime: Number(t.wait_time),
+        service: t.service,
+      }));
+      
+      return { completedServices, abandonedTickets };
+    } catch (error) {
+      console.error('❌ Erro ao buscar dados históricos:', error);
+      return { completedServices: [], abandonedTickets: [] };
     }
   }, []);
 
@@ -616,6 +648,18 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
   };
 
+  const updateDeskServices = async (deskId: number, services: ServiceType[], preferentialOnly?: boolean) => {
+    try {
+      const updates: any = { services };
+      if (preferentialOnly !== undefined) updates.preferential_only = preferentialOnly;
+      await api.desks.update(deskId, updates);
+      await refreshState();
+    } catch (error) {
+      console.error('❌ Erro ao atualizar serviços da mesa:', error);
+      throw error;
+    }
+  };
+
   const startService = async (deskId: number) => {
     const startTime = Date.now();
     const desk = state.desks.find(d => d.id === deskId);
@@ -789,8 +833,8 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const addAgendaEntry = async (entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'>): Promise<void> => {
-    const newEntry: AgendaEntry = {
+  const addAgendaEntry = async (entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status' | 'controle_id'>): Promise<AgendaEntry> => {
+    const newEntryStub: AgendaEntry = {
       ...entryData,
       id: `AGENDA-${Date.now()}-${entryData.ticketNumber}`,
       data_do_registro: Date.now(),
@@ -798,26 +842,48 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
 
     try {
-      // Fix field mapping to match both apiService.ts and the database schema
-      await api.agenda.create({
-        id: newEntry.id,
-        ticket_number: newEntry.ticketNumber,
-        nome_completo: newEntry.nome,
-        cpf: newEntry.cpf,
-        telefone: newEntry.telefone,
-        email: newEntry.email,
-        data_agendamento: new Date(newEntry.data_retorno + 'T00:00:00').getTime(),
-        horario: newEntry.hora_retorno,
-        servico: newEntry.local_retorno, 
-        observacoes: newEntry.resumo,
-        documentos_necessarios: newEntry.documentos_selecionados,
-        data_do_registro: newEntry.data_do_registro,
+      const response = await api.agenda.create({
+        id: newEntryStub.id,
+        ticket_number: newEntryStub.ticketNumber,
+        nome_completo: newEntryStub.nome,
+        cpf: newEntryStub.cpf,
+        telefone: newEntryStub.telefone,
+        email: newEntryStub.email,
+        data_agendamento: new Date(newEntryStub.data_retorno + 'T00:00:00').getTime(),
+        horario: newEntryStub.hora_retorno,
+        servico: newEntryStub.local_retorno, 
+        observacoes: newEntryStub.resumo,
+        documentos_necessarios: newEntryStub.documentos_selecionados,
+        data_do_registro: newEntryStub.data_do_registro,
+        usuario_registro: newEntryStub.usuario_registro,
       });
+
+      // Map response back to AgendaEntry
+      const savedEntry: AgendaEntry = {
+        id: response.id,
+        ticketNumber: response.ticket_number,
+        nome: response.nome_completo,
+        cpf: response.cpf,
+        telefone: response.telefone,
+        whatsapp_mesmo: true,
+        email: response.email,
+        data_retorno: new Date(Number(response.data_agendamento)).toISOString().split('T')[0],
+        hora_retorno: response.horario,
+        local_retorno: response.servico as any,
+        resumo: response.observacoes,
+        documentos_selecionados: response.documentos_necessarios || [],
+        data_do_registro: Number(response.data_do_registro),
+        usuario_registro: response.usuario_registro,
+        controle_id: response.controle_id,
+        status: response.status,
+      };
 
       setState(prevState => ({
         ...prevState,
-        agenda: [...prevState.agenda, newEntry],
+        agenda: [...prevState.agenda, savedEntry],
       }));
+
+      return savedEntry;
     } catch (error) {
       console.error('❌ Erro ao adicionar agendamento:', error);
       throw error;
@@ -837,6 +903,9 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         observacoes: updatedEntry.resumo,
         documentos_necessarios: updatedEntry.documentos_selecionados,
         status: updatedEntry.status,
+        usuario_registro: updatedEntry.usuario_registro,
+        data_do_registro: updatedEntry.data_do_registro,
+        compareceu_data: updatedEntry.compareceu_data,
       });
 
       setState(prevState => ({
@@ -1007,8 +1076,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       updateAgendaEntry,
       cancelAgendaEntry,
       refreshState,
+      fetchHistoricalData,
       recallTicket,
       abandonTicket,
+      updateDeskServices,
     }}>
       {children}
     </QueueContext.Provider>

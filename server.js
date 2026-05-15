@@ -69,6 +69,14 @@ async function init() {
 
         client.release();
         dbReady = true;
+
+        // Migração automática para a coluna compareceu_data
+        try {
+            await pool.query('ALTER TABLE agenda ADD COLUMN IF NOT EXISTS compareceu_data BIGINT');
+            console.log('✅ Banco de Dados: Verificação de esquema concluída (compareceu_data).');
+        } catch (e) {
+            console.warn('⚠️  Aviso: Não foi possível verificar/adicionar a coluna compareceu_data (pode já existir).');
+        }
     } catch (err) {
         console.error('❌ ERRO DE CONEXÃO:', err.message);
         console.log('⚠️  O servidor rodará em modo memória (sem persistência).');
@@ -369,54 +377,68 @@ function startServer() {
     // PATCH user (update role/permissions)
     app.patch('/api/users/:id', async (req, res) => {
         const { id } = req.params;
-        const { role, fullName, email, cpf, status, password, profile_picture } = req.body;
+        const { role, fullName, email, cpf, status, password, profile_picture, adminId, adminName } = req.body;
 
         try {
             if (dbReady) {
+                // Get current data for logging if status or password changes
+                let currentUserData = null;
+                if (status || password) {
+                    const currentRes = await pool.query('SELECT username, full_name, status FROM users WHERE id = $1', [id]);
+                    currentUserData = currentRes.rows[0];
+                }
+
                 const updates = [];
                 const params = [];
                 let paramCount = 1;
 
-                if (role) {
-                    updates.push(`role = $${paramCount++}`);
-                    params.push(role);
-                }
-                if (fullName) {
-                    updates.push(`full_name = $${paramCount++}`);
-                    params.push(fullName);
-                }
-                if (email !== undefined) {
-                    updates.push(`email = $${paramCount++}`);
-                    params.push(email);
-                }
-                if (cpf !== undefined) {
-                    updates.push(`cpf = $${paramCount++}`);
-                    params.push(cpf);
-                }
-                if (status) {
-                    updates.push(`status = $${paramCount++}`);
-                    params.push(status);
-                }
-                if (password) {
-                    updates.push(`password = $${paramCount++}`);
-                    params.push(password);
-                }
-                if (profile_picture !== undefined) {
-                    updates.push(`profile_picture = $${paramCount++}`);
-                    params.push(profile_picture);
-                }
+                if (role) { updates.push(`role = $${paramCount++}`); params.push(role); }
+                if (fullName) { updates.push(`full_name = $${paramCount++}`); params.push(fullName); }
+                if (email !== undefined) { updates.push(`email = $${paramCount++}`); params.push(email); }
+                if (cpf !== undefined) { updates.push(`cpf = $${paramCount++}`); params.push(cpf); }
+                if (status) { updates.push(`status = $${paramCount++}`); params.push(status); }
+                if (password) { updates.push(`password = $${paramCount++}`); params.push(password); }
+                if (profile_picture !== undefined) { updates.push(`profile_picture = $${paramCount++}`); params.push(profile_picture); }
 
-                if (updates.length === 0) {
-                    return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
-                }
+                if (updates.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
 
                 params.push(id);
                 const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING id, username, full_name, email, cpf, profile_picture, role, status, created_at`;
-
                 const result = await pool.query(query, params);
 
-                if (result.rowCount === 0) {
-                    return res.status(404).json({ error: 'Usuário não encontrado.' });
+                if (result.rowCount === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+                // Log the change if it was status or password
+                if (currentUserData && adminId) {
+                    console.log(`[LOG] Iniciando gravação de log para ${id}. Admin: ${adminName} (${adminId})`);
+                    if (status && status !== currentUserData.status) {
+                        const logId = `status-${id}-${Date.now()}`;
+                        const details = JSON.stringify({
+                            oldStatus: currentUserData.status,
+                            newStatus: status,
+                            changedBy: adminId,
+                            changedByName: adminName || 'Admin'
+                        });
+                        console.log(`[LOG] Gravando STATUS_CHANGE para ${id}`);
+                        await pool.query(
+                            'INSERT INTO activity_logs (id, user_id, user_name, timestamp, action, type, details) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                            [logId, id, currentUserData.full_name, Date.now(), 'STATUS_CHANGE', 'MANAGEMENT', details]
+                        );
+                    }
+                    if (password) {
+                        const logId = `pwd-${id}-${Date.now()}`;
+                        const details = JSON.stringify({
+                            changedBy: adminId,
+                            changedByName: adminName || 'Admin'
+                        });
+                        console.log(`[LOG] Gravando PASSWORD_RESET para ${id}`);
+                        await pool.query(
+                            'INSERT INTO activity_logs (id, user_id, user_name, timestamp, action, type, details) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                            [logId, id, currentUserData.full_name, Date.now(), 'PASSWORD_RESET', 'MANAGEMENT', details]
+                        );
+                    }
+                } else {
+                    console.log(`[LOG] Pulo gravação de log. AdminId: ${adminId}, CurrentUserData: ${!!currentUserData}`);
                 }
 
                 console.log(`[SUPABASE/DB] Usuário atualizado: ${result.rows[0].username}`);
@@ -497,7 +519,7 @@ function startServer() {
     // PATCH desk (login/logout/update)
     app.patch('/api/desks/:id', async (req, res) => {
         const { id } = req.params;
-        const { user_id, user_display_name, current_ticket, current_ticket_info, service_start_time, services } = req.body;
+        const { user_id, user_display_name, current_ticket, current_ticket_info, service_start_time, services, preferential_only } = req.body;
 
         try {
             if (dbReady) {
@@ -530,6 +552,10 @@ function startServer() {
                 if (services !== undefined) {
                     updates.push(`services = $${paramCount++}`);
                     params.push(services);
+                }
+                if (preferential_only !== undefined) {
+                    updates.push(`preferential_only = $${paramCount++}`);
+                    params.push(preferential_only);
                 }
 
                 updates.push(`updated_at = NOW()`);
@@ -592,9 +618,27 @@ function startServer() {
 
     // GET completed services
     app.get('/api/completed-services', async (req, res) => {
+        const { limit = 100, startDate, endDate } = req.query;
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM completed_services ORDER BY completed_timestamp DESC LIMIT 100');
+                let query = 'SELECT * FROM completed_services';
+                const params = [];
+                const conditions = [];
+
+                if (startDate && endDate) {
+                    conditions.push(`completed_timestamp BETWEEN $${params.length + 1} AND $${params.length + 2}`);
+                    params.push(parseInt(startDate));
+                    params.push(parseInt(endDate));
+                }
+
+                if (conditions.length > 0) {
+                    query += ' WHERE ' + conditions.join(' AND ');
+                }
+
+                query += ` ORDER BY completed_timestamp DESC LIMIT $${params.length + 1}`;
+                params.push(parseInt(limit));
+
+                const result = await pool.query(query, params);
                 return res.json({ services: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -629,9 +673,27 @@ function startServer() {
 
     // GET abandoned tickets
     app.get('/api/abandoned-tickets', async (req, res) => {
+        const { limit = 100, startDate, endDate } = req.query;
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM abandoned_tickets ORDER BY abandoned_timestamp DESC LIMIT 100');
+                let query = 'SELECT * FROM abandoned_tickets';
+                const params = [];
+                const conditions = [];
+
+                if (startDate && endDate) {
+                    conditions.push(`abandoned_timestamp BETWEEN $${params.length + 1} AND $${params.length + 2}`);
+                    params.push(parseInt(startDate));
+                    params.push(parseInt(endDate));
+                }
+
+                if (conditions.length > 0) {
+                    query += ' WHERE ' + conditions.join(' AND ');
+                }
+
+                query += ` ORDER BY abandoned_timestamp DESC LIMIT $${params.length + 1}`;
+                params.push(parseInt(limit));
+
+                const result = await pool.query(query, params);
                 return res.json({ tickets: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -712,16 +774,18 @@ function startServer() {
     app.post('/api/agenda', async (req, res) => {
         const {
             id, ticket_number, nome_completo, cpf, telefone, email,
-            data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro
+            data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro,
+            usuario_registro
         } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
                     `INSERT INTO agenda (
                         id, ticket_number, nome_completo, cpf, telefone, email,
-                        data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-                    [id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro]
+                        data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro,
+                        usuario_registro
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+                    [id, ticket_number, nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, data_do_registro, usuario_registro]
                 );
                 return res.status(201).json(result.rows[0]);
             } else {
@@ -736,7 +800,7 @@ function startServer() {
     // PATCH agenda
     app.patch('/api/agenda/:id', async (req, res) => {
         const { id } = req.params;
-        const { nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, status } = req.body;
+        const { nome_completo, cpf, telefone, email, data_agendamento, horario, servico, observacoes, documentos_necessarios, status, compareceu_data } = req.body;
         try {
             if (dbReady) {
                 const updates = [];
@@ -752,6 +816,9 @@ function startServer() {
                 if (observacoes !== undefined) { updates.push(`observacoes = $${n++}`); params.push(observacoes); }
                 if (documentos_necessarios !== undefined) { updates.push(`documentos_necessarios = $${n++}`); params.push(documentos_necessarios); }
                 if (status !== undefined) { updates.push(`status = $${n++}`); params.push(status); }
+                if (req.body.usuario_registro !== undefined) { updates.push(`usuario_registro = $${n++}`); params.push(req.body.usuario_registro); }
+                if (req.body.data_do_registro !== undefined) { updates.push(`data_do_registro = $${n++}`); params.push(req.body.data_do_registro); }
+                if (compareceu_data !== undefined) { updates.push(`compareceu_data = $${n++}`); params.push(compareceu_data); }
                 if (updates.length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar.' });
                 params.push(id);
                 const result = await pool.query(`UPDATE agenda SET ${updates.join(', ')} WHERE id = $${n} RETURNING *`, params);
@@ -771,9 +838,9 @@ function startServer() {
         const { id } = req.params;
         try {
             if (dbReady) {
-                const result = await pool.query('DELETE FROM agenda WHERE id = $1 RETURNING *', [id]);
+                const result = await pool.query("UPDATE agenda SET status = 'CANCELADO' WHERE id = $1 RETURNING *", [id]);
                 if (result.rowCount === 0) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-                return res.json({ message: 'Agendamento removido.' });
+                return res.json({ message: 'Agendamento cancelado.', entry: result.rows[0] });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
             }
@@ -830,9 +897,17 @@ function startServer() {
 
     // GET activity logs
     app.get('/api/activity-logs', async (req, res) => {
+        const { user_id, limit } = req.query;
         try {
             if (dbReady) {
-                const result = await pool.query('SELECT * FROM activity_logs ORDER BY timestamp DESC LIMIT 100');
+                let query = 'SELECT * FROM activity_logs';
+                const params = [];
+                if (user_id) {
+                    query += ' WHERE user_id = $1';
+                    params.push(user_id);
+                }
+                query += ` ORDER BY timestamp DESC LIMIT ${limit || 100}`;
+                const result = await pool.query(query, params);
                 return res.json({ logs: result.rows });
             } else {
                 return res.status(503).json({ error: 'Banco de dados não disponível.' });
@@ -845,15 +920,15 @@ function startServer() {
 
     // POST activity log
     app.post('/api/activity-logs', async (req, res) => {
-        const { id, user_id, user_name, timestamp, type, duration } = req.body;
+        const { id, user_id, user_name, timestamp, type, duration, action, details } = req.body;
         try {
             if (dbReady) {
                 const result = await pool.query(
-                    `INSERT INTO activity_logs (id, user_id, user_name, timestamp, type, duration)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     ON CONFLICT (id) DO UPDATE SET duration = EXCLUDED.duration
+                    `INSERT INTO activity_logs (id, user_id, user_name, timestamp, type, duration, action, details)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (id) DO UPDATE SET duration = EXCLUDED.duration, details = EXCLUDED.details
                      RETURNING *`,
-                    [id, user_id, user_name, timestamp, type, duration || null]
+                    [id, user_id, user_name, timestamp, type || null, duration || null, action || null, details || null]
                 );
                 return res.status(201).json(result.rows[0]);
             } else {

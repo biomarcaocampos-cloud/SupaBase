@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types';
 import { ProfilePictureInput } from '../auth/ProfilePictureInput';
-import { validateCPF } from '../../utils/cpfValidator';
+import { validateCPF, formatCPF } from '../../utils/cpfValidator';
 
 const getDisplayName = (fullName: string): string => {
     if (!fullName) return '';
@@ -183,7 +183,7 @@ const UserDetailsModal: React.FC<{ user: User, onClose: () => void }> = ({ user,
             </div>
             <div className="p-6 overflow-y-auto">
                 <p><strong>Nome:</strong> {user.fullName}</p>
-                <p><strong>CPF:</strong> {user.cpf}</p>
+                <p><strong>CPF:</strong> {formatCPF(user.cpf)}</p>
                 <h4 className="font-bold mt-4 mb-2 text-red-400">Mudanças de Status</h4>
                 {user.history.statusChanges.length > 0 ? (
                     <ul className="list-disc pl-5 text-sm space-y-1">
@@ -267,10 +267,12 @@ export const UserManagement: React.FC = () => {
                                         </div>
                                         <div>
                                             <p className="font-bold text-white">{getDisplayName(user.fullName)}</p>
-                                            <p className="text-sm text-gray-400">{user.fullName}</p>
+                                            {getDisplayName(user.fullName) !== user.fullName && (
+                                                <p className="text-sm text-gray-400">{user.fullName}</p>
+                                            )}
                                         </div>
                                     </td>
-                                    <td className="p-3 font-mono text-gray-300">{user.cpf}</td>
+                                    <td className="p-3 font-mono text-gray-300">{formatCPF(user.cpf)}</td>
                                     <td className="p-3 text-gray-300">{user.role === 'MANAGER' ? 'Gestor' : 'Atendente'}</td>
                                     <td className="p-3 text-center">
                                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${user.isActive ? 'bg-green-900 text-green-300' : 'bg-gray-600 text-gray-300'}`}>

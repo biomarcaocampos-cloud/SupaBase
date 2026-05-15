@@ -20,23 +20,55 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const fetchUsers = useCallback(async () => {
         try {
-            const response = await api.users.getAll();
-            const backendUsers = response.users || [];
+            const [usersResponse, logsResponse] = await Promise.all([
+                api.users.getAll(),
+                api.activityLogs.getAll({ limit: 500 }) // Load more logs for history
+            ]);
             
-            const mappedUsers: User[] = backendUsers.map((u: any) => ({
-                id: u.id.toString(),
-                cpf: u.cpf || '',
-                fullName: u.full_name,
-                passwordHash: '',
-                role: u.role === 'admin' ? 'MANAGER' : 'ATTENDANT',
-                isActive: u.status === 'ATIVO',
-                profilePicture: u.profile_picture,
-                createdAt: new Date(u.created_at).getTime(),
-                history: {
-                    statusChanges: [],
-                    passwordResets: [],
-                },
-            }));
+            const backendUsers = usersResponse.users || [];
+            const allLogs = logsResponse.logs || [];
+            
+            const mappedUsers: User[] = backendUsers.map((u: any) => {
+                const userLogs = allLogs.filter((l: any) => l.user_id === u.id.toString());
+                
+                const statusChanges = userLogs
+                    .filter((l: any) => l.action === 'STATUS_CHANGE')
+                    .map((l: any) => {
+                        const details = l.details ? JSON.parse(l.details) : {};
+                        return {
+                            timestamp: Number(l.timestamp),
+                            active: details.newStatus === 'ATIVO',
+                            changedBy: details.changedBy || '',
+                            changedByName: details.changedByName || 'Sistema'
+                        };
+                    });
+                
+                const passwordResets = userLogs
+                    .filter((l: any) => l.action === 'PASSWORD_RESET')
+                    .map((l: any) => {
+                        const details = l.details ? JSON.parse(l.details) : {};
+                        return {
+                            timestamp: Number(l.timestamp),
+                            changedBy: details.changedBy || '',
+                            changedByName: details.changedByName || 'Sistema'
+                        };
+                    });
+
+                return {
+                    id: u.id.toString(),
+                    cpf: u.cpf || '',
+                    fullName: u.full_name,
+                    passwordHash: '',
+                    role: u.role === 'admin' ? 'MANAGER' : 'ATTENDANT',
+                    isActive: u.status === 'ATIVO',
+                    profilePicture: u.profile_picture,
+                    createdAt: new Date(u.created_at).getTime(),
+                    history: {
+                        statusChanges,
+                        passwordResets,
+                    },
+                };
+            });
             
             setUsers(mappedUsers);
         } catch (error) {
@@ -158,7 +190,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 password: data.password,
                 fullName: data.fullName,
                 email: null,
-                cpf: data.cpf,
+                cpf: data.cpf.replace(/\D/g, ''),
                 profilePicture: data.profilePicture,
             });
 
@@ -190,7 +222,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 password: userData.password,
                 fullName: userData.fullName,
                 email: null,
-                cpf: userData.cpf,
+                cpf: userData.cpf.replace(/\D/g, ''),
                 profilePicture: userData.profilePicture || null,
             });
 
@@ -203,12 +235,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const updateUser = async (updatedUserWithChanges: Partial<User> & { password?: string }): Promise<void> => {
-        if (!currentUser || currentUser.role !== 'MANAGER') {
-            throw new Error("Apenas gestores podem editar usuários.");
-        }
-
         if (!updatedUserWithChanges.id) {
             throw new Error("ID de usuário ausente para atualização.");
+        }
+
+        // Permitir que o usuário edite a si mesmo, ou que um gestor edite qualquer um
+        const isSelf = currentUser?.id === updatedUserWithChanges.id;
+        const isManager = currentUser?.role === 'MANAGER';
+
+        if (!isManager && !isSelf) {
+            throw new Error("Você não tem permissão para editar este perfil.");
         }
 
         try {
@@ -217,17 +253,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (updatedUserWithChanges.fullName) {
                 updateData.full_name = updatedUserWithChanges.fullName;
             }
-            if (updatedUserWithChanges.role) {
+            if (updatedUserWithChanges.role && isManager) { // Apenas gestor muda cargo
                 updateData.role = updatedUserWithChanges.role === 'MANAGER' ? 'admin' : 'user';
             }
-            if (updatedUserWithChanges.cpf) {
+            if (updatedUserWithChanges.cpf && isManager) { // Apenas gestor muda CPF
                 updateData.cpf = updatedUserWithChanges.cpf;
             }
             if (updatedUserWithChanges.profilePicture !== undefined) {
                 updateData.profile_picture = updatedUserWithChanges.profilePicture;
             }
+            if (updatedUserWithChanges.password) {
+                updateData.password = updatedUserWithChanges.password;
+            }
 
-            await api.users.update(updatedUserWithChanges.id, updateData);
+            await api.users.update(updatedUserWithChanges.id, {
+                ...updateData,
+                adminId: currentUser?.id,
+                adminName: getDisplayName(currentUser?.fullName || '')
+            });
 
             // If updating current user, update session
             if (currentUser.id === updatedUserWithChanges.id) {
@@ -282,7 +325,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             const newStatus = targetUser.status === 'ATIVO' ? 'INATIVO' : 'ATIVO';
 
-            await api.users.update(userId, { status: newStatus });
+            await api.users.update(userId, { 
+                status: newStatus,
+                adminId: currentUser.id,
+                adminName: getDisplayName(currentUser.fullName)
+            });
 
             console.log('✅ Status do usuário alterado');
             await fetchUsers();
@@ -312,7 +359,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             const newPassword = targetUser.cpf.replace(/\D/g, '');
 
-            await api.users.update(userId, { password: newPassword });
+            await api.users.update(userId, { 
+                password: newPassword,
+                adminId: currentUser.id,
+                adminName: getDisplayName(currentUser.fullName)
+            });
 
             console.log('✅ Senha resetada para o CPF do usuário');
             await fetchUsers();
@@ -331,7 +382,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     user_id: user.id,
                     user_name: getDisplayName(user.fullName),
                     timestamp: Date.now(),
-                    type: 'LOGIN',
+                    action: 'LOGIN',
                 });
             } else if (type === 'LOGOUT') {
                 // Find the last login log and update duration

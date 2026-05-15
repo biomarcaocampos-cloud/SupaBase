@@ -39,7 +39,9 @@ export const ServiceDesk: React.FC = () => {
     if (!loggedInDesk) return { pendingPreferential: 0, pendingNormal: 0 };
     const deskServices = loggedInDesk.services;
     const pendingPreferential = state.waitingPreferential.filter(t => deskServices.includes(t.service)).length;
-    const pendingNormal = state.waitingNormal.filter(t => deskServices.includes(t.service)).length;
+    const pendingNormal = loggedInDesk.preferentialOnly 
+      ? 0 
+      : state.waitingNormal.filter(t => deskServices.includes(t.service)).length;
     return { pendingPreferential, pendingNormal };
   }, [state.waitingPreferential, state.waitingNormal, loggedInDesk]);
 
@@ -322,11 +324,11 @@ export const ServiceDesk: React.FC = () => {
                     </button>
                     <button
                       onClick={handleCallNormal}
-                      disabled={pendingNormal === 0}
+                      disabled={pendingNormal === 0 || loggedInDesk.preferentialOnly}
                       className="w-full font-bold py-4 px-2 rounded-lg text-lg transition-transform transform hover:scale-105 duration-300 shadow-md flex flex-col items-center justify-center bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed disabled:transform-none"
                     >
-                      <span>Chamar Normal</span>
-                      <span className="text-2xl font-black">{pendingNormal}</span>
+                      <span>{loggedInDesk.preferentialOnly ? 'Normal Restrito' : 'Chamar Normal'}</span>
+                      <span className="text-2xl font-black">{loggedInDesk.preferentialOnly ? '--' : pendingNormal}</span>
                     </button>
                   </div>
                 )}
@@ -430,12 +432,17 @@ export const ServiceDesk: React.FC = () => {
             required
             className="bg-gray-800 shadow-sm appearance-none border border-gray-700 rounded-lg w-full py-3 px-4 text-white leading-tight focus:outline-none focus:ring-2 focus:ring-red-500"
           >
-            <option value="" disabled>Selecione uma mesa disponível</option>
-            {availableDesks.map(desk => (
-              <option key={desk.id} value={desk.id}>
-                Mesa {desk.id}
-              </option>
-            ))}
+            <option value="" disabled>Selecione uma mesa</option>
+            {state.desks.map(desk => {
+              const isOccupied = !!desk.user;
+              const attendantName = isOccupied ? getDisplayName(desk.user?.displayName || '') : '';
+              
+              return (
+                <option key={desk.id} value={desk.id} disabled={isOccupied}>
+                  Mesa {desk.id} {isOccupied ? `(Ocupada por ${attendantName})` : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
         <div className="mb-6">

@@ -27,7 +27,7 @@ export const AgendaModal: React.FC<AgendaModalProps> = ({ onClose, attendant, ti
     const [outrosDocsText, setOutrosDocsText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showPreview, setShowPreview] = useState(false);
-    const [previewData, setPreviewData] = useState<Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'> | null>(null);
+    const [previewData, setPreviewData] = useState<Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status' | 'controle_id'> | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const isFormValid = formData.nome && formData.telefone && formData.resumo && formData.data_retorno && formData.hora_retorno && formData.local_retorno;
@@ -77,30 +77,34 @@ export const AgendaModal: React.FC<AgendaModalProps> = ({ onClose, attendant, ti
             return;
         }
 
-        const entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'> = {
+        const entryData: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status' | 'controle_id'> = {
             ...formData,
             documentos_selecionados: selectedDocs,
             outros_documentos_texto: selectedDocs.includes("Outros documentos relevantes") ? outrosDocsText : undefined,
             ticketNumber: ticketNumber,
             atendente_id: attendant.id,
-            atendente_responsavel: attendant.name,
+            usuario_registro: attendant.name,
         };
         setPreviewData(entryData);
         setShowPreview(true);
     };
 
-    const handlePrint = (data: Omit<AgendaEntry, 'id' | 'data_do_registro' | 'status'>) => {
+    const handlePrint = (data: AgendaEntry) => {
         const date = new Date(data.data_retorno + 'T00:00:00').toLocaleDateString('pt-BR');
         const docsHtml = data.documentos_selecionados.map(doc => `<li>${doc === "Outros documentos relevantes" && data.outros_documentos_texto ? `Outros: ${data.outros_documentos_texto}` : doc}</li>`).join('');
         const printContent = `
             <html><head><title>Comprovante de Agendamento</title>
-            <style>body{font-family:sans-serif;margin:20px}h1{font-size:18px;border-bottom:1px solid #000;padding-bottom:5px}p{margin:5px 0}ul{padding-left:20px}strong{display:inline-block;width:90px}</style></head>
-            <body><h1>Comprovante de Agendamento - JEC Guarulhos</h1>
+            <style>body{font-family:sans-serif;margin:20px}h1{font-size:18px;border-bottom:1px solid #000;padding-bottom:5px}p{margin:5px 0}ul{padding-left:20px}strong{display:inline-block;width:120px}</style></head>
+            <body>
+            <h1>Comprovante de Agendamento - JEC Guarulhos</h1>
+            <p><strong>Nº CONTROLE:</strong> ${data.controle_id || '---'}</p>
             <p><strong>Nome:</strong> ${data.nome}</p>
             <p><strong>Retornar em:</strong> ${date} às ${data.hora_retorno}</p>
             <p><strong>Local:</strong> ${data.local_retorno} - ${LocaisRetorno[data.local_retorno]}</p>
             <hr><p><strong>Documentos a apresentar:</strong></p><ul>${docsHtml}</ul>
-            <hr><p><strong>Resumo do caso:</strong> ${data.resumo}</p></body></html>`;
+            <hr><p><strong>Resumo do caso:</strong> ${data.resumo}</p>
+            <hr><p style="font-size: 10px; color: #666">Atendente Responsável: ${data.usuario_registro} | Data: ${new Date(data.data_do_registro).toLocaleString('pt-BR')}</p>
+            </body></html>`;
 
         const printWindow = window.open('', '_blank');
         printWindow?.document.write(printContent);
@@ -112,8 +116,8 @@ export const AgendaModal: React.FC<AgendaModalProps> = ({ onClose, attendant, ti
         if (!previewData) return;
         setIsLoading(true);
         try {
-            await addAgendaEntry(previewData);
-            handlePrint(previewData);
+            const savedEntry = await addAgendaEntry(previewData);
+            handlePrint(savedEntry);
             onClose();
         } catch (error) {
             alert('Falha ao salvar o agendamento.');

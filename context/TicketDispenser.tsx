@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQueue } from '../hooks/useQueue';
-import { ServiceType, ServiceTypeDetails } from '../types';
+import { ServiceType, ServiceTypeDetails, AgendaEntry } from '../types';
 import { ServerStatusIndicator } from '../components/ServerStatusIndicator';
 
 declare global {
@@ -9,7 +9,14 @@ declare global {
   }
 }
 
-// Define colors for each service type for better visual distinction in dark mode
+// Helper to format date to DD/MM/YYYY
+const formatDateBR = (dateStr: string) => {
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-');
+    return `${day}/${month}/${year}`;
+};
+
+// Define colors for each service type
 const serviceColors: Record<ServiceType, { border: string; hoverBg: string; text: string }> = {
   'TRIAGEM': {
     border: 'border-blue-500 hover:border-blue-400',
@@ -28,8 +35,100 @@ const serviceColors: Record<ServiceType, { border: string; hoverBg: string; text
   }
 };
 
+interface ValidationModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onSearch: () => void;
+    onInputChange: (value: string) => void;
+    input: string;
+    error: string | null;
+    foundAppointment: AgendaEntry | null;
+    onDispense: (service: ServiceType, appointment?: AgendaEntry) => void;
+    isDispensing: boolean;
+}
+
+const ValidationModal: React.FC<ValidationModalProps> = ({ 
+    isOpen, onClose, onSearch, onInputChange, input, error, foundAppointment, onDispense, isDispensing 
+}) => {
+  if (!isOpen) return null;
+
+  const today = new Date().toISOString().split('T')[0];
+  const isToday = foundAppointment?.data_retorno === today;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-90 flex justify-center items-center z-50 p-4">
+      <div className="bg-gray-800 p-8 rounded-2xl w-full max-w-lg border-2 border-orange-500 shadow-2xl relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+        
+        <h3 className="text-2xl font-bold text-orange-400 mb-2">Validação de Agendamento</h3>
+        <p className="text-gray-400 mb-6 text-sm">Insira o número do agendamento ou CPF para localizar seu horário.</p>
+        
+        <div className="space-y-4">
+          <div>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => onInputChange(e.target.value)}
+              placeholder="Nº Agendamento ou CPF"
+              autoFocus
+              className="w-full bg-gray-900 text-white border-2 border-gray-700 p-4 rounded-xl text-xl text-center focus:border-orange-500 outline-none transition-colors"
+              onKeyPress={(e) => e.key === 'Enter' && onSearch()}
+            />
+          </div>
+
+          {!foundAppointment ? (
+            <>
+              <button onClick={onSearch} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-xl transition-colors shadow-lg">
+                BUSCAR AGENDAMENTO
+              </button>
+              
+              {error && (
+                <div className="bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-lg text-sm">
+                  <p className="font-bold mb-2">Atenção!</p>
+                  <p>{error}</p>
+                  <div className="mt-4 flex flex-col gap-2">
+                      <button onClick={() => onDispense('ATENDIMENTO')} className="text-white bg-blue-600 hover:bg-blue-700 font-bold py-3 rounded-lg text-xs uppercase tracking-wider">
+                          Emitir Senha para Atendimento Comum
+                      </button>
+                      <button onClick={onClose} className="text-gray-400 hover:text-white text-xs underline">
+                          Tentar novamente ou escolher outro serviço
+                      </button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="bg-gray-900 border border-gray-700 p-4 rounded-xl text-left">
+              <p className="text-green-400 font-black text-xs uppercase mb-2">Agendamento Localizado!</p>
+              <p className="text-white font-bold text-lg">{foundAppointment.nome}</p>
+              <p className="text-gray-300 text-sm">Data: <span className={isToday ? "text-white font-bold" : "text-red-400 font-bold"}>{formatDateBR(foundAppointment.data_retorno)}</span> às {foundAppointment.hora_retorno}</p>
+              <p className="text-gray-400 text-sm italic mt-1">{foundAppointment.local_retorno}</p>
+              
+              {!isToday ? (
+                <div className="mt-6 p-4 bg-red-900/30 border border-red-500 rounded-lg">
+                  <p className="text-red-200 text-sm font-bold mb-2">Data Divergente!</p>
+                  <p className="text-red-300 text-xs">Seu agendamento não é para hoje. Por favor, dirija-se à triagem para reagendar ou atualizar seu horário antes de emitir a senha.</p>
+                  <button onClick={onClose} className="w-full mt-4 bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 rounded-lg text-sm">
+                    VOLTAR
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => onDispense('ATERMACAO', foundAppointment)} disabled={isDispensing} className="w-full mt-6 bg-green-600 hover:bg-green-700 text-white font-black py-4 rounded-xl text-lg shadow-xl transform transition hover:scale-105 disabled:opacity-50">
+                  {isDispensing ? 'EMITINDO...' : 'CONFIRMAR E EMITIR SENHA'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const TicketDispenser: React.FC = () => {
-  const { dispenseTicket, reinsertTicket, state } = useQueue();
+  const { dispenseTicket, reinsertTicket, updateAgendaEntry, state } = useQueue();
   const [step, setStep] = useState<'type' | 'service' | 'reinsert' | 'confirmation'>('type');
   const [selectedType, setSelectedType] = useState<'NORMAL' | 'PREFERENCIAL' | null>(null);
   const [lastTicket, setLastTicket] = useState<{ number: string; service: ServiceType } | null>(null);
@@ -37,6 +136,10 @@ export const TicketDispenser: React.FC = () => {
   const [reinsertTicketNumber, setReinsertTicketNumber] = useState('');
   const [reinsertMessage, setReinsertMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isServerOnline, setIsServerOnline] = useState(false);
+  const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
+  const [validationInput, setValidationInput] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [foundAppointment, setFoundAppointment] = useState<AgendaEntry | null>(null);
 
   const handleTypeSelect = (type: 'NORMAL' | 'PREFERENCIAL') => {
     setSelectedType(type);
@@ -45,20 +148,80 @@ export const TicketDispenser: React.FC = () => {
 
   const handleServiceSelect = async (service: ServiceType) => {
     if (isDispensing || !selectedType) return;
+    
+    if (service === 'ATERMACAO') {
+      setIsValidationModalOpen(true);
+      setValidationInput('');
+      setValidationError(null);
+      setFoundAppointment(null);
+      return;
+    }
+
+    await executeDispense(service);
+  };
+
+  const executeDispense = async (service: ServiceType, appointment?: AgendaEntry) => {
     setIsDispensing(true);
     try {
-      const newTicketNumber = await dispenseTicket(selectedType, service);
+      // If there's an appointment, mark it as COMPARECEU
+      if (appointment) {
+          await updateAgendaEntry({
+              ...appointment,
+              status: 'COMPARECEU',
+              compareceu_data: Date.now()
+          });
+      }
+
+      const newTicketNumber = await dispenseTicket(selectedType!, service);
       setLastTicket({ number: newTicketNumber, service });
       setStep('confirmation');
+      setIsValidationModalOpen(false);
     } catch (error) {
       console.error("Failed to dispense ticket:", error);
-      if (error instanceof Error) {
-        alert(error.message);
-      } else {
-        alert('Ocorreu um erro desconhecido ao emitir a senha.');
-      }
+      alert(error instanceof Error ? error.message : 'Ocorreu um erro ao emitir a senha.');
     } finally {
       setIsDispensing(false);
+    }
+  };
+
+  const handleSearchAppointment = () => {
+    setValidationError(null);
+    setFoundAppointment(null);
+
+    const input = validationInput.trim();
+    if (!input) {
+        setValidationError('Por favor, informe o CPF ou o número do agendamento.');
+        return;
+    }
+
+    const cleanInput = input.replace(/\D/g, '');
+    const upperInput = input.toUpperCase();
+
+    const found = state.agenda.find(entry => {
+        const entryCpf = (entry.cpf || '').replace(/\D/g, '');
+        const entryTicket = (entry.ticketNumber || '').toUpperCase();
+        const entryStatus = (entry.status || '').toUpperCase();
+
+        const matchCpf = cleanInput.length === 11 && entryCpf === cleanInput;
+        const matchId = entry.controle_id?.toString() === cleanInput;
+        const matchTicket = entryTicket === upperInput;
+        
+        // Allowed statuses: AGENDADO or COMPARECEU (though we might block reuse)
+        const isValidStatus = entryStatus === 'AGENDADO';
+        const isAlreadyUsed = entryStatus === 'COMPARECEU';
+        
+        if ((matchCpf || matchId || matchTicket) && isAlreadyUsed) {
+            setValidationError('Este agendamento já foi utilizado para emissão de senha hoje.');
+            return false;
+        }
+
+        return (matchCpf || matchId || matchTicket) && isValidStatus;
+    });
+
+    if (found) {
+        setFoundAppointment(found);
+    } else if (!validationError) {
+        setValidationError('Nenhum agendamento ativo localizado com os dados informados. Verifique se os dados estão corretos ou se o agendamento já foi utilizado.');
     }
   };
 
@@ -94,6 +257,7 @@ export const TicketDispenser: React.FC = () => {
     setLastTicket(null);
     setReinsertMessage(null);
     setReinsertTicketNumber('');
+    setIsValidationModalOpen(false);
   };
 
   const handlePrintThermal = () => {
@@ -176,6 +340,17 @@ export const TicketDispenser: React.FC = () => {
       case 'service':
         return (
           <>
+            <ValidationModal 
+                isOpen={isValidationModalOpen}
+                onClose={() => setIsValidationModalOpen(false)}
+                onSearch={handleSearchAppointment}
+                onInputChange={setValidationInput}
+                input={validationInput}
+                error={validationError}
+                foundAppointment={foundAppointment}
+                onDispense={executeDispense}
+                isDispensing={isDispensing}
+            />
             <button onClick={() => setStep('type')} className="absolute top-4 left-4 text-red-400 font-semibold flex items-center gap-1">&larr; Voltar</button>
             <h2 className="text-3xl font-bold text-white mb-8">Selecione o Serviço</h2>
             <div className="space-y-4">

@@ -28,8 +28,10 @@ export interface ActivityLog {
     userId: string;
     userName: string;
     timestamp: number;
-    type: 'LOGIN' | 'LOGOUT';
+    type?: string;
+    action: 'LOGIN' | 'LOGOUT' | 'STATUS_CHANGE' | 'PASSWORD_RESET';
     duration?: number;
+    details?: string; // JSON string with extra info
 }
 
 export interface WaitingTicket {
@@ -76,6 +78,7 @@ export interface ServiceDesk {
   currentTicketInfo: WaitingTicket | null;
   serviceStartTime: number | null;
   services: ServiceType[];
+  preferentialOnly?: boolean;
 }
 
 export type LocalRetorno = 'JEC Central' | 'Anexo FIG' | 'Anexo ENIAC';
@@ -102,8 +105,10 @@ export interface AgendaEntry {
     outros_documentos_texto?: string;
     data_do_registro: number;
     atendente_id: string;
-    atendente_responsavel: string;
-    status: 'AGENDADO' | 'CONCLUÍDO' | 'CANCELADO';
+    usuario_registro: string;
+    controle_id?: number;
+    status: 'AGENDADO' | 'CONCLUÍDO' | 'CANCELADO' | 'COMPARECEU';
+    compareceu_data?: number;
 }
 
 
