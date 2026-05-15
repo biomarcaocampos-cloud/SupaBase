@@ -1,4 +1,4 @@
-// API Service - Centralized API calls to backend
+// API Service - Centralized API calls to backend (Re-deploying for fix validation)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002';
 const SERVER_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/status`;
 
@@ -342,14 +342,6 @@ export const activityLogApi = {
         return handleResponse(response);
     },
 
-    // Get all logs (can be filtered by user_id)
-    getAll: async (filters?: { user_id?: string; limit?: number }) => {
-        const queryParams = new URLSearchParams();
-        if (filters?.user_id) queryParams.append('user_id', filters.user_id);
-        if (filters?.limit) queryParams.append('limit', filters.limit.toString());
-        
-        const response = await fetch(`${API_BASE_URL}/api/activity-logs?${queryParams.toString()}`);
-        return handleResponse(response);
     },
 
     // Create activity log
