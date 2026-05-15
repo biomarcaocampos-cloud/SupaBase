@@ -377,7 +377,7 @@ function startServer() {
     // PATCH user (update role/permissions)
     app.patch('/api/users/:id', async (req, res) => {
         const { id } = req.params;
-        const { role, fullName, email, cpf, status, password, profile_picture, adminId, adminName } = req.body;
+        const { role, full_name, email, cpf, status, password, profile_picture, adminId, adminName } = req.body;
 
         try {
             if (dbReady) {
@@ -393,7 +393,7 @@ function startServer() {
                 let paramCount = 1;
 
                 if (role) { updates.push(`role = $${paramCount++}`); params.push(role); }
-                if (fullName) { updates.push(`full_name = $${paramCount++}`); params.push(fullName); }
+                if (full_name) { updates.push(`full_name = $${paramCount++}`); params.push(full_name); }
                 if (email !== undefined) { updates.push(`email = $${paramCount++}`); params.push(email); }
                 if (cpf !== undefined) { updates.push(`cpf = $${paramCount++}`); params.push(cpf); }
                 if (status) { updates.push(`status = $${paramCount++}`); params.push(status); }
