@@ -99,6 +99,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           dispenseTimestamp: new Date(t.created_at).getTime(),
           type: 'NORMAL' as const,
           service: t.service as ServiceType,
+          observations: t.observations,
         }));
 
       console.log('📝 [REFRESH] Senhas NORMAIS filtradas:', waitingNormal.length);
@@ -110,6 +111,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           dispenseTimestamp: new Date(t.created_at).getTime(),
           type: 'PREFERENCIAL' as const,
           service: t.service as ServiceType,
+          observations: t.observations,
         }));
 
       console.log('📝 [REFRESH] Senhas PREFERENCIAIS filtradas:', waitingPreferential.length);
@@ -428,10 +430,10 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const dispenseTicket = async (type: 'NORMAL' | 'PREFERENCIAL', service: ServiceType): Promise<string> => {
+  const dispenseTicket = async (type: 'NORMAL' | 'PREFERENCIAL', service: ServiceType, observations?: string): Promise<string> => {
     try {
       // Call backend to create ticket
-      const backendTicket = await api.tickets.create(type, service);
+      const backendTicket = await api.tickets.create(type, service, observations);
       const ticketNumber = backendTicket.ticket_number;
 
       // Update local state
@@ -439,7 +441,8 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         number: ticketNumber,
         dispenseTimestamp: Date.now(),
         type,
-        service
+        service,
+        observations
       };
 
       setState(prevState => {

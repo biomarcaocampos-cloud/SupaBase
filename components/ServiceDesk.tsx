@@ -243,9 +243,23 @@ export const ServiceDesk: React.FC = () => {
                   {loggedInDesk.currentTicketInfo?.number || '----'}
                 </p>
                 {loggedInDesk.currentTicketInfo && (
-                  <p className="text-xl text-gray-300 font-semibold -mt-2 mb-4">
-                    Serviço: {ServiceTypeDetails[loggedInDesk.currentTicketInfo.service].title}
-                  </p>
+                  <>
+                    <p className="text-xl text-gray-300 font-semibold -mt-2 mb-2">
+                      Serviço: {ServiceTypeDetails[loggedInDesk.currentTicketInfo.service].title}
+                    </p>
+                    
+                    {loggedInDesk.currentTicketInfo.observations && (
+                      <div className="bg-blue-900/40 border border-blue-500/50 p-4 rounded-lg mb-4 max-w-xl mx-auto text-left">
+                        <p className="text-blue-300 text-xs font-bold uppercase mb-1 flex items-center gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                          Observação do Cidadão:
+                        </p>
+                        <p className="text-white text-md italic">
+                          "{loggedInDesk.currentTicketInfo.observations}"
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
                 {loggedInDesk.currentTicketInfo && !isServiceActive && (
                   <div className="flex flex-col items-center gap-2 mb-4">

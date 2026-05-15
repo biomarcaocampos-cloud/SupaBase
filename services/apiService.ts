@@ -78,11 +78,11 @@ export const userApi = {
 
 export const ticketApi = {
     // Create ticket
-    create: async (type: 'NORMAL' | 'PREFERENCIAL', service: string) => {
+    create: async (type: 'NORMAL' | 'PREFERENCIAL', service: string, observations?: string) => {
         const response = await fetch(`${API_BASE_URL}/api/tickets`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type, service }),
+            body: JSON.stringify({ type, service, observations }),
         });
         return handleResponse(response);
     },

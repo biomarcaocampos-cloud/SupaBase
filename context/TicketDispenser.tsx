@@ -45,10 +45,12 @@ interface ValidationModalProps {
     foundAppointment: AgendaEntry | null;
     onDispense: (service: ServiceType, appointment?: AgendaEntry) => void;
     isDispensing: boolean;
+    observations: string;
+    onObservationsChange: (value: string) => void;
 }
 
 const ValidationModal: React.FC<ValidationModalProps> = ({ 
-    isOpen, onClose, onSearch, onInputChange, input, error, foundAppointment, onDispense, isDispensing 
+    isOpen, onClose, onSearch, onInputChange, input, error, foundAppointment, onDispense, isDispensing, observations, onObservationsChange
 }) => {
   if (!isOpen) return null;
 
@@ -105,9 +107,19 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
               <p className="text-white font-bold text-lg">{foundAppointment.nome}</p>
               <p className="text-gray-300 text-sm">Data: <span className={isToday ? "text-white font-bold" : "text-red-400 font-bold"}>{formatDateBR(foundAppointment.data_retorno)}</span> às {foundAppointment.hora_retorno}</p>
               <p className="text-gray-400 text-sm italic mt-1">{foundAppointment.local_retorno}</p>
+              <div className="mt-4">
+                <label className="text-xs font-bold text-gray-400 uppercase">Observações (Opcional)</label>
+                <textarea
+                  value={observations}
+                  onChange={(e) => onObservationsChange(e.target.value)}
+                  placeholder="Ex: Processo nº 123... ou Dúvida sobre X"
+                  className="w-full mt-1 bg-gray-700 text-white p-3 rounded-lg text-sm focus:border-green-500 outline-none"
+                  rows={2}
+                />
+              </div>
               
               {!isToday ? (
-                <div className="mt-6 p-4 bg-red-900/30 border border-red-500 rounded-lg">
+                <div className="mt-4 p-4 bg-red-900/30 border border-red-500 rounded-lg">
                   <p className="text-red-200 text-sm font-bold mb-2">Data Divergente!</p>
                   <p className="text-red-300 text-xs">Seu agendamento não é para hoje. Por favor, dirija-se à triagem para reagendar ou atualizar seu horário antes de emitir a senha.</p>
                   <button onClick={onClose} className="w-full mt-4 bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 rounded-lg text-sm">
@@ -129,7 +141,7 @@ const ValidationModal: React.FC<ValidationModalProps> = ({
 
 export const TicketDispenser: React.FC = () => {
   const { dispenseTicket, reinsertTicket, updateAgendaEntry, state } = useQueue();
-  const [step, setStep] = useState<'type' | 'service' | 'reinsert' | 'confirmation'>('type');
+  const [step, setStep] = useState<'type' | 'service' | 'reinsert' | 'confirmation' | 'observations'>('type');
   const [selectedType, setSelectedType] = useState<'NORMAL' | 'PREFERENCIAL' | null>(null);
   const [lastTicket, setLastTicket] = useState<{ number: string; service: ServiceType } | null>(null);
   const [isDispensing, setIsDispensing] = useState(false);
@@ -140,15 +152,20 @@ export const TicketDispenser: React.FC = () => {
   const [validationInput, setValidationInput] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [foundAppointment, setFoundAppointment] = useState<AgendaEntry | null>(null);
+  const [pendingService, setPendingService] = useState<ServiceType | null>(null);
+  const [observations, setObservations] = useState('');
 
   const handleTypeSelect = (type: 'NORMAL' | 'PREFERENCIAL') => {
     setSelectedType(type);
     setStep('service');
   };
 
-  const handleServiceSelect = async (service: ServiceType) => {
+  const handleServiceSelect = (service: ServiceType) => {
     if (isDispensing || !selectedType) return;
     
+    setPendingService(service);
+    setObservations(''); // Reset observations
+
     if (service === 'ATERMACAO') {
       setIsValidationModalOpen(true);
       setValidationInput('');
@@ -157,7 +174,7 @@ export const TicketDispenser: React.FC = () => {
       return;
     }
 
-    await executeDispense(service);
+    setStep('observations');
   };
 
   const executeDispense = async (service: ServiceType, appointment?: AgendaEntry) => {
@@ -172,10 +189,11 @@ export const TicketDispenser: React.FC = () => {
           });
       }
 
-      const newTicketNumber = await dispenseTicket(selectedType!, service);
-      setLastTicket({ number: newTicketNumber, service });
+      const newTicketNumber = await dispenseTicket(selectedType!, service, observations);
+      setLastTicket({ number: newTicketNumber, service, observations });
       setStep('confirmation');
       setIsValidationModalOpen(false);
+      setObservations('');
     } catch (error) {
       console.error("Failed to dispense ticket:", error);
       alert(error instanceof Error ? error.message : 'Ocorreu um erro ao emitir a senha.');
@@ -258,6 +276,8 @@ export const TicketDispenser: React.FC = () => {
     setReinsertMessage(null);
     setReinsertTicketNumber('');
     setIsValidationModalOpen(false);
+    setObservations('');
+    setPendingService(null);
   };
 
   const handlePrintThermal = () => {
@@ -350,6 +370,8 @@ export const TicketDispenser: React.FC = () => {
                 foundAppointment={foundAppointment}
                 onDispense={executeDispense}
                 isDispensing={isDispensing}
+                observations={observations}
+                onObservationsChange={setObservations}
             />
             <button onClick={() => setStep('type')} className="absolute top-4 left-4 text-red-400 font-semibold flex items-center gap-1">&larr; Voltar</button>
             <h2 className="text-3xl font-bold text-white mb-8">Selecione o Serviço</h2>
@@ -369,6 +391,40 @@ export const TicketDispenser: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+          </>
+        );
+      case 'observations':
+        return (
+          <>
+            <button onClick={() => setStep('service')} className="absolute top-4 left-4 text-red-400 font-semibold flex items-center gap-1">&larr; Voltar</button>
+            <h2 className="text-3xl font-bold text-white mb-4">Informações Adicionais</h2>
+            <p className="text-gray-400 mb-6">Deseja adicionar alguma observação para o atendente? (Opcional)</p>
+            
+            <div className="space-y-6">
+              <textarea
+                value={observations}
+                onChange={(e) => setObservations(e.target.value)}
+                placeholder="Digite aqui alguma informação que ajude no seu atendimento..."
+                className="w-full bg-gray-800 text-white border-2 border-gray-700 p-4 rounded-xl text-lg focus:border-blue-500 outline-none transition-colors"
+                rows={4}
+                autoFocus
+              />
+              
+              <button 
+                onClick={() => executeDispense(pendingService!)} 
+                disabled={isDispensing}
+                className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-5 rounded-xl text-2xl shadow-xl transform transition hover:scale-105 disabled:opacity-50"
+              >
+                {isDispensing ? 'EMITINDO...' : 'GERAR SENHA AGORA'}
+              </button>
+              
+              <button 
+                onClick={() => { setObservations(''); executeDispense(pendingService!); }}
+                className="w-full text-gray-500 hover:text-gray-300 text-sm underline"
+              >
+                Pular observações e gerar senha
+              </button>
             </div>
           </>
         );

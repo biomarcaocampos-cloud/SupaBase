@@ -113,7 +113,7 @@ function startServer() {
 
     // POST - Create new ticket
     app.post('/api/tickets', async (req, res) => {
-        const { type, service } = req.body;
+        const { type, service, observations } = req.body;
         if (!type || !service) {
             return res.status(400).json({ error: 'Dados inválidos.' });
         }
@@ -126,10 +126,10 @@ function startServer() {
                 const prefix = type === 'NORMAL' ? 'N' : 'P';
                 ticketNumberStr = `${prefix}${String(nextVal).padStart(3, '0')}`;
                 const insertQuery = `
-                    INSERT INTO waiting_tickets (ticket_number, ticket_type, service, status)
-                    VALUES ($1, $2, $3, 'AGUARDANDO')
+                    INSERT INTO waiting_tickets (ticket_number, ticket_type, service, status, observations)
+                    VALUES ($1, $2, $3, 'AGUARDANDO', $4)
                     RETURNING *;`;
-                const result = await pool.query(insertQuery, [ticketNumberStr, type, service]);
+                const result = await pool.query(insertQuery, [ticketNumberStr, type, service, observations || null]);
                 console.log(`[SUPABASE/DB] Nova senha gerada: ${ticketNumberStr} (${service})`);
                 return res.status(201).json(result.rows[0]);
             } else {
@@ -145,6 +145,7 @@ function startServer() {
                     ticket_number: ticketNumberStr,
                     ticket_type: type,
                     service: service,
+                    observations: observations || null,
                     created_at: new Date(),
                     status: 'AGUARDANDO'
                 };

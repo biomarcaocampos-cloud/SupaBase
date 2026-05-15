@@ -39,6 +39,7 @@ export interface WaitingTicket {
   dispenseTimestamp: number;
   type: 'NORMAL' | 'PREFERENCIAL';
   service: ServiceType;
+  observations?: string;
 }
 
 export interface CompletedService {
