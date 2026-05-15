@@ -342,8 +342,6 @@ export const activityLogApi = {
         return handleResponse(response);
     },
 
-    },
-
     // Create activity log
     create: async (data: {
         id: string;
