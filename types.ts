@@ -40,6 +40,7 @@ export interface WaitingTicket {
   type: 'NORMAL' | 'PREFERENCIAL';
   service: ServiceType;
   observations?: string;
+  isPrioritized?: boolean;
 }
 
 export interface CompletedService {

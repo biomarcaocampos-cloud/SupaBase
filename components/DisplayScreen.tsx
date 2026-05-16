@@ -41,7 +41,7 @@ const playTicketCallSound = (type: 'NORMAL' | 'PREFERENCIAL') => {
   oscillator.connect(gainNode);
   gainNode.connect(ctx.destination);
   gainNode.gain.setValueAtTime(0, ctx.currentTime);
-  gainNode.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.05);
+  gainNode.gain.linearRampToValueAtTime(1.2, ctx.currentTime + 0.05);
   if (type === 'PREFERENCIAL') {
     oscillator.type = 'sine';
     oscillator.frequency.setValueAtTime(880, ctx.currentTime);
@@ -239,17 +239,17 @@ export const DisplayScreen: React.FC<DisplayScreenProps> = ({ setView }) => {
 
       {/* Section 1: Current Ticket */}
       <div className="flex-[2] flex flex-col justify-center items-center p-4 border-b-2 border-gray-800 bg-gray-900">
-        <div className={`w-full transition-all duration-500 text-center ${showBlink ? 'animate-pulse' : ''}`}>
+        <div className={`w-full text-center origin-center ${showBlink ? 'ticket-call-anim' : ''}`}>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-3xl lg:text-4xl text-gray-400 font-semibold uppercase">Senha</p>
-              <p className="text-8xl lg:text-9xl leading-none font-mono font-bold text-white mt-4">
+              <p className="text-3xl lg:text-5xl text-gray-400 font-semibold uppercase tracking-widest">Senha</p>
+              <p className="text-[8rem] lg:text-[14rem] leading-none font-mono font-black text-yellow-400 mt-4">
                 {latestTicket ? latestTicket.ticketNumber : '----'}
               </p>
             </div>
             <div>
-              <p className="text-3xl lg:text-4xl text-gray-400 font-semibold uppercase">Mesa</p>
-              <p className="text-8xl lg:text-9xl leading-none font-mono font-bold text-white mt-4">
+              <p className="text-3xl lg:text-5xl text-gray-400 font-semibold uppercase tracking-widest">Mesa</p>
+              <p className="text-[8rem] lg:text-[14rem] leading-none font-mono font-black text-yellow-400 mt-4">
                 {latestTicket ? String(latestTicket.deskNumber).padStart(2, '0') : '--'}
               </p>
             </div>
