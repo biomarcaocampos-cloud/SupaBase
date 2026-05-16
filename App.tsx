@@ -840,7 +840,7 @@ const ActiveDesksModal: React.FC<{ desks: ServiceDeskType[]; completedServices: 
 };
 
 const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> = ({ initialTab = 'stats' }) => {
-    const { state, updateTips, setAlertMessage, clearAlertMessage, fetchHistoricalData } = useQueue();
+    const { state, updateTips, setAlertMessage, clearAlertMessage, fetchHistoricalData, prioritizeTicket } = useQueue();
     const [startDate, setStartDate] = useState(new Date());
     const [endDate, setEndDate] = useState(new Date());
     const [historicalData, setHistoricalData] = useState<{ completedServices: CompletedService[], abandonedTickets: AbandonedTicket[] } | null>(null);
@@ -855,6 +855,7 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
     const [showActiveDesksModal, setShowActiveDesksModal] = useState(false);
     const [modalContent, setModalContent] = useState<{ title: string, services: CompletedService[] } | null>(null);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [waitingModalType, setWaitingModalType] = useState<'NORMAL' | 'PREFERENCIAL' | null>(null);
 
     useEffect(() => {
         const loadHistory = async () => {
@@ -1304,6 +1305,76 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
         </div>
     );
 
+    const WaitingTicketsModal = () => {
+        if (!waitingModalType) return null;
+        
+        const tickets = waitingModalType === 'NORMAL' ? state.waitingNormal : state.waitingPreferential;
+        const typeLabel = waitingModalType === 'NORMAL' ? 'Normais' : 'Preferenciais';
+
+        return (
+            <div className="fixed inset-0 bg-black bg-opacity-90 flex justify-center items-center z-50 p-4" onClick={() => setWaitingModalType(null)}>
+                <div className="bg-gray-900 text-white rounded-xl shadow-2xl w-full max-w-4xl p-6" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-center mb-6 border-b border-gray-700 pb-4">
+                        <h2 className="text-2xl font-bold flex items-center gap-2">
+                            {waitingModalType === 'PREFERENCIAL' ? <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}
+                            Senhas {typeLabel} Aguardando
+                        </h2>
+                        <button onClick={() => setWaitingModalType(null)} className="text-gray-400 hover:text-white transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-[60vh]">
+                        {tickets.length > 0 ? (
+                            <table className="w-full text-left">
+                                <thead className="bg-gray-800 sticky top-0">
+                                    <tr>
+                                        <th className="p-3 font-semibold text-gray-400 uppercase text-xs">Senha</th>
+                                        <th className="p-3 font-semibold text-gray-400 uppercase text-xs">Serviço</th>
+                                        <th className="p-3 font-semibold text-gray-400 uppercase text-xs">Observação</th>
+                                        <th className="p-3 font-semibold text-gray-400 uppercase text-xs">Espera</th>
+                                        <th className="p-3 font-semibold text-gray-400 uppercase text-xs">Ação</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-800">
+                                    {tickets.map(t => (
+                                        <tr key={t.number} className={`hover:bg-gray-800 transition-colors ${t.isPrioritized ? 'bg-yellow-900/20' : ''}`}>
+                                            <td className="p-3 font-bold text-lg">{t.number}</td>
+                                            <td className="p-3 font-medium text-blue-400">{ServiceTypeDetails[t.service]?.title || t.service}</td>
+                                            <td className="p-3 text-sm text-gray-300 italic max-w-xs truncate">{t.observations || '-'}</td>
+                                            <td className="p-3 font-mono text-gray-400">{formatTime(Date.now() - t.dispenseTimestamp)}</td>
+                                            <td className="p-3">
+                                                {t.isPrioritized ? (
+                                                    <span className="inline-flex items-center gap-1 text-xs font-bold bg-yellow-500/20 text-yellow-400 px-3 py-1.5 rounded border border-yellow-500/30">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                                                        Priorizada
+                                                    </span>
+                                                ) : (
+                                                    <button 
+                                                        onClick={() => prioritizeTicket(t.number)}
+                                                        className="inline-flex items-center gap-1 text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors shadow-sm"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
+                                                        Priorizar
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div className="py-12 text-center text-gray-500">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                <p className="text-xl">A fila está vazia.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="h-full bg-black text-white p-4 lg:p-8 overflow-y-auto">
             <div className="w-full">
@@ -1344,6 +1415,7 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                                         value={String(waitingPreferential.length)} 
                                         subValue={prefBreakdown}
                                         tooltip={prefTooltip}
+                                        onClick={() => setWaitingModalType('PREFERENCIAL')}
                                         icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-yellow-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" /></svg>} 
                                     />
                                     <StatCard 
@@ -1351,6 +1423,7 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
                                         value={String(waitingNormal.length)} 
                                         subValue={normalBreakdown}
                                         tooltip={normalTooltip}
+                                        onClick={() => setWaitingModalType('NORMAL')}
                                         icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>} 
                                     />
                                     <StatCard 
@@ -1441,6 +1514,7 @@ const ManagementScreen: React.FC<{ initialTab?: 'stats' | 'agenda' | 'users' }> 
             {showCompletedModal && <CompletedServicesModal title={`Atendimentos Realizados (${startDate.toLocaleDateString('pt-BR')} - ${endDate.toLocaleDateString('pt-BR')})`} services={allCompletedServices} onClose={() => setShowCompletedModal(false)} />}
             {isMessageModalOpen && <MessageManagementModal onClose={() => setIsMessageModalOpen(false)} tips={state.tips} alertMessage={state.alertMessage} updateTips={updateTips} setAlertMessage={setAlertMessage} clearAlertMessage={clearAlertMessage} />}
             {showActiveDesksModal && <ActiveDesksModal desks={desks} completedServices={allCompletedServices} onClose={() => setShowActiveDesksModal(false)} />}
+            <WaitingTicketsModal />
             <ReportModal />
         </div>
     );

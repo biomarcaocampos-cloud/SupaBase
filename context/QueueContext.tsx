@@ -55,6 +55,7 @@ interface QueueContextType {
   state: QueueState;
   dispenseTicket: (type: 'NORMAL' | 'PREFERENCIAL', service: ServiceType) => Promise<string>;
   callSpecificTicket: (deskId: number, type: 'NORMAL' | 'PREFERENCIAL') => void;
+  prioritizeTicket: (ticketNumber: string) => Promise<void>;
   login: (deskId: number, user: { id: string; displayName: string }, services: ServiceType[]) => void;
   logout: (deskId: number) => void;
   updateDeskServices: (deskId: number, services: ServiceType[], preferentialOnly?: boolean) => Promise<void>;
@@ -95,25 +96,27 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const today = new Date().setHours(0,0,0,0);
 
       const waitingNormal = tickets
-        .filter((t: any) => t.ticket_type === 'NORMAL' && new Date(t.created_at).setHours(0,0,0,0) === today)
+        .filter((t: any) => t.ticket_type === 'NORMAL')
         .map((t: any) => ({
           number: t.ticket_number,
           dispenseTimestamp: new Date(t.created_at).getTime(),
           type: 'NORMAL' as const,
           service: t.service as ServiceType,
           observations: t.observations,
+          isPrioritized: !!t.is_prioritized,
         }));
 
       console.log('📝 [REFRESH] Senhas NORMAIS filtradas:', waitingNormal.length);
 
       const waitingPreferential = tickets
-        .filter((t: any) => t.ticket_type === 'PREFERENCIAL' && new Date(t.created_at).setHours(0,0,0,0) === today)
+        .filter((t: any) => t.ticket_type === 'PREFERENCIAL')
         .map((t: any) => ({
           number: t.ticket_number,
           dispenseTimestamp: new Date(t.created_at).getTime(),
           type: 'PREFERENCIAL' as const,
           service: t.service as ServiceType,
           observations: t.observations,
+          isPrioritized: !!t.is_prioritized,
         }));
 
       console.log('📝 [REFRESH] Senhas PREFERENCIAIS filtradas:', waitingPreferential.length);
@@ -488,7 +491,6 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const { waitingPreferential, waitingNormal, desks } = stateAfterFinalizing;
     const deskServices = deskBeingUsed.services;
 
-    let ticketToCall: WaitingTicket | undefined;
     let queueToSearch: WaitingTicket[];
 
     if (type === 'PREFERENCIAL') {
@@ -497,7 +499,13 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       queueToSearch = waitingNormal;
     }
 
-    const ticketIndex = queueToSearch.findIndex(t => deskServices.includes(t.service));
+    // 1. Check for prioritized ticket of the requested type
+    let ticketIndex = queueToSearch.findIndex(t => deskServices.includes(t.service) && t.isPrioritized);
+    
+    // 2. Fallback to normal logic (FIFO)
+    if (ticketIndex === -1) {
+      ticketIndex = queueToSearch.findIndex(t => deskServices.includes(t.service));
+    }
 
     if (ticketIndex === -1) {
       // Update desk in backend
@@ -525,7 +533,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    ticketToCall = queueToSearch[ticketIndex];
+    const ticketToCall = queueToSearch[ticketIndex];
 
     let newWaitingPreferential = [...waitingPreferential];
     let newWaitingNormal = [...waitingNormal];
@@ -925,6 +933,19 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const prioritizeTicket = async (ticketNumber: string) => {
+    try {
+      console.log(`[FRONTEND] Priorizando senha: ${ticketNumber}`);
+      // Usando o caminho relativo que o proxy ou a configuração do sistema espera
+      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3002'}/api/tickets/${ticketNumber}/prioritize`, {
+        method: 'POST',
+      });
+      refreshState();
+    } catch (e) {
+      console.error('Erro ao priorizar ticket:', e);
+    }
+  };
+
   const cancelAgendaEntry = async (entryId: string) => {
     try {
       await api.agenda.cancel(entryId);
@@ -1068,6 +1089,7 @@ export const QueueProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       state,
       dispenseTicket,
       callSpecificTicket,
+      prioritizeTicket,
       login,
       logout,
       startService,

@@ -118,19 +118,17 @@ function startServer() {
             return res.status(400).json({ error: 'Dados inválidos.' });
         }
 
-        // Determinar Sigla (NT, NC, NA, TP, TC, TA)
+        // Determinar Sigla (TN, TP, AN, AP, CN, CP)
         let prefix = '';
-        if (type === 'NORMAL') {
-            prefix = 'N';
-            if (service === 'TRIAGEM') prefix += 'T';
-            else if (service === 'ATERMACAO') prefix += 'A';
-            else prefix += 'C'; // Atendimento/Consulta
-        } else {
-            prefix = 'T'; // Preferencial
-            if (service === 'TRIAGEM') prefix += 'P';
-            else if (service === 'ATERMACAO') prefix += 'A';
-            else prefix += 'C'; // Atendimento/Consulta
-        }
+        
+        // Letra do Serviço primeiro
+        if (service === 'TRIAGEM') prefix = 'T';
+        else if (service === 'ATERMACAO') prefix = 'A';
+        else prefix = 'C'; // Atendimento/Consulta
+        
+        // Letra do Tipo depois
+        if (type === 'NORMAL') prefix += 'N';
+        else prefix += 'P'; // Preferencial
 
         try {
             let ticketNumberStr;
@@ -295,6 +293,29 @@ function startServer() {
         } catch (e) {
             console.error('Erro ao atualizar ticket:', e);
             res.status(500).json({ error: 'Erro interno ao atualizar ticket.', details: e.message });
+        }
+    });
+
+    // POST prioritize ticket
+    app.post('/api/tickets/:id/prioritize', async (req, res) => {
+        const { id } = req.params;
+        try {
+            if (dbReady) {
+                let whereClause = /^\d+$/.test(id) ? `id = $1` : `ticket_number = $1`;
+                const query = `UPDATE waiting_tickets SET is_prioritized = TRUE WHERE ${whereClause} RETURNING *`;
+                const result = await pool.query(query, [id]);
+                
+                if (result.rowCount === 0) return res.status(404).json({ error: 'Ticket não encontrado.' });
+                return res.json(result.rows[0]);
+            } else {
+                const ticket = localWaitList.find(t => t.id == id || t.ticket_number == id);
+                if (!ticket) return res.status(404).json({ error: 'Ticket não encontrado.' });
+                ticket.is_prioritized = true;
+                return res.json(ticket);
+            }
+        } catch (e) {
+            console.error('Erro ao priorizar ticket:', e);
+            res.status(500).json({ error: 'Erro interno ao priorizar ticket.', details: e.message });
         }
     });
 
